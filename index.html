@@ -3,89 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#050b12" />
-  <meta name="description" content="Justus.net — one address, every endpoint." />
-  <title>Justus.net // Gateway</title>
+  <meta name="theme-color" content="#111315" />
+  <meta name="description" content="Justus.net — a small map of where to find me online." />
+  <title>Justus.net</title>
   <link rel="stylesheet" href="./style.css" />
   <script src="./script.js" defer></script>
 </head>
 <body>
-  <div class="noise" aria-hidden="true"></div>
-  <div class="grid" aria-hidden="true"></div>
-
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="Justus.net home">
-      <span class="brand-mark">J</span>
-      <span>justus<span class="accent">.net</span></span>
-    </a>
-
-    <div class="topbar-status" aria-label="Site status">
-      <span class="status-dot"></span>
-      <span>gateway online</span>
-      <span class="divider">/</span>
-      <span id="clock">--:--:--</span>
+  <main class="page">
+    <div class="intro">
+      <p class="kicker">justus.net</p>
+      <h1>Justus</h1>
+      <p class="subtitle">A small map of where to find me online.</p>
     </div>
-  </header>
 
-  <main class="shell">
-    <section class="intro" aria-labelledby="page-title">
-      <p class="eyebrow">PUBLIC IDENTITY GATEWAY</p>
-      <h1 id="page-title">One address.<br><span>Every endpoint.</span></h1>
-      <p class="lede">
-        This is the router for everywhere I exist online.
-        Pick a destination and I’ll send you there.
-      </p>
+    <section class="network" id="network" aria-label="Links to Justus around the internet">
+      <svg class="graph" id="graph" aria-hidden="true"></svg>
+      <div class="link-layer" id="link-layer"></div>
+
+      <div class="core" id="core" aria-hidden="true">
+        <span class="core-dot"></span>
+      </div>
     </section>
 
-    <section class="topology" aria-label="Justus.net destinations">
-      <svg class="routes" id="routes" aria-hidden="true">
-        <defs>
-          <filter id="routeGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="3.5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-      </svg>
-
-      <div class="hub" id="hub" aria-label="Justus.net central hub">
-        <div class="hub-ring ring-a"></div>
-        <div class="hub-ring ring-b"></div>
-        <div class="hub-device">
-          <div class="hub-lights">
-            <span></span><span></span><span></span>
-          </div>
-          <div class="hub-logo">J<span>.NET</span></div>
-          <div class="hub-label">IDENTITY ROUTER</div>
-          <div class="ports" aria-hidden="true">
-            <i></i><i></i><i></i><i></i><i></i><i></i>
-          </div>
-        </div>
-      </div>
-
-      <div class="nodes" id="nodes"></div>
-    </section>
-
-    <aside class="terminal" aria-live="polite">
-      <div class="terminal-bar">
-        <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-        <span>route console</span>
-        <span class="terminal-state">READY</span>
-      </div>
-      <div class="terminal-body">
-        <p><span class="prompt">justus@net:~$</span> <span id="terminal-command">route --list</span></p>
-        <p id="terminal-output">6 endpoints discovered. Hover a node to inspect route.</p>
-        <p><span class="prompt">justus@net:~$</span> <span class="cursor" aria-hidden="true"></span></p>
-      </div>
-    </aside>
+    <p class="hint" id="hint" aria-live="polite">move through the network</p>
   </main>
-
-  <footer class="footer">
-    <span>JUSTUS.NET</span>
-    <span class="footer-center">route / connect / continue</span>
-    <span>EST. 2026</span>
-  </footer>
 </body>
 </html>
