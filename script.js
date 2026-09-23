@@ -155,51 +155,745 @@ const routes = {
   discord: ["e01", "e32", "e30"]
 };
 
-const graph = document.querySelector("#graph");
+const TAU = Math.PI * 2;
+const SAMPLES = 22;
+const MAX_PULSES = 64;
+const IDLE_HINT = "move through the network";
+
+const canvas = document.querySelector("#graph");
+const ctx = canvas.getContext("2d");
 const network = document.querySelector("#network");
 const linkLayer = document.querySelector("#link-layer");
-const coreEl = document.querySelector("#core");
 const hint = document.querySelector("#hint");
 
-const edgeEls = new Map();
-const ambientNodeEls = new Map();
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const endpointIds = new Set(endpoints.map((endpoint) => endpoint.id));
 const endpointEls = new Map();
 
-const motionState = new Map();
-let basePositions = desktopPositions;
-let dimensions = { width: 0, height: 0 };
-let resizeTimer;
-let ambientTimer;
-let morphTimer;
+const pointer = { x: -9999, y: -9999, nx: 0, ny: 0, sx: 0, sy: 0, speed: 0, active: false, last: 0 };
+const pulses = [];
+
+let W = 0;
+let H = 0;
+let minDim = 1;
+let time = 0;
+let lastFrame = 0;
+let frameId = 0;
 let hintTimer;
-let fireBusy = false;
-let animationFrame;
+let mainLayer;
+let farLayer;
+let stars = [];
 
-const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-function svgEl(name, attrs = {}) {
-  const el = document.createElementNS("http://www.w3.org/2000/svg", name);
-  for (const [key, value] of Object.entries(attrs)) {
-    el.setAttribute(key, value);
-  }
-  return el;
-}
+const rand = (min, max) => min + Math.random() * (max - min);
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const pick = (items) => items[Math.floor(Math.random() * items.length)];
 
 function isMobile() {
   return window.innerWidth <= 760;
 }
 
-function currentBasePositions() {
-  return isMobile() ? mobilePositions : desktopPositions;
+/* ---------- glow sprites ---------- */
+
+function makeSprite(rgb, falloff = 0.22) {
+  const size = 128;
+  const sprite = document.createElement("canvas");
+  sprite.width = sprite.height = size;
+  const g = sprite.getContext("2d");
+  const gradient = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, `rgba(${rgb}, 1)`);
+  gradient.addColorStop(falloff, `rgba(${rgb}, 0.32)`);
+  gradient.addColorStop(0.55, `rgba(${rgb}, 0.07)`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, size, size);
+  return sprite;
 }
 
-function randomBetween(min, max) {
-  return min + Math.random() * (max - min);
+const glowSprite = makeSprite("186, 222, 246");
+const pulseSprite = makeSprite("228, 244, 255", 0.12);
+const coreSprite = makeSprite("205, 228, 244", 0.3);
+
+function drawSprite(sprite, x, y, size, alpha) {
+  if (alpha <= 0.004) return;
+  ctx.globalAlpha = Math.min(1, alpha);
+  ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
+/* ---------- smooth wandering (layered sines) ---------- */
+
+function makeWander() {
+  const comps = [];
+  for (let i = 0; i < 3; i += 1) {
+    comps.push({
+      fx: rand(0.025, 0.07) * (i + 1),
+      fy: rand(0.025, 0.07) * (i + 1),
+      px: rand(0, TAU),
+      py: rand(0, TAU),
+      a: 1 / ((i + 1.2) * 1.6)
+    });
+  }
+  return comps;
 }
+
+function wander(comps, t) {
+  let x = 0;
+  let y = 0;
+  for (const c of comps) {
+    x += c.a * Math.sin(t * c.fx * TAU + c.px);
+    y += c.a * Math.cos(t * c.fy * TAU + c.py);
+  }
+  return [x, y];
+}
+
+/* ---------- layers ---------- */
+
+function makeNode(id, kind, ax, ay, wamp) {
+  const dendrites = [];
+  if (kind === "ambient") {
+    const count = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i += 1) {
+      dendrites.push({
+        ang: rand(0, TAU),
+        len: rand(7, 20),
+        ph: rand(0, TAU),
+        fr: rand(0.08, 0.2),
+        curl: rand(-0.6, 0.6)
+      });
+    }
+  }
+
+  return {
+    id,
+    kind,
+    ax,
+    ay,
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    tx: 0,
+    ty: 0,
+    fx: 0,
+    fy: 0,
+    wander: makeWander(),
+    wamp,
+    r: kind === "core" ? 3.2 : rand(1.6, 2.5),
+    v: 0,
+    flash: 0,
+    refractory: 0,
+    ring: 1,
+    breath: rand(0, TAU),
+    dendrites,
+    edges: []
+  };
+}
+
+function makeEdge(id, a, b, index) {
+  const edge = {
+    id,
+    a,
+    b,
+    rest: 1,
+    len: 1,
+    tension: 1,
+    glow: 0,
+    route: false,
+    bend: (index % 2 === 0 ? 1 : -1) * rand(0.025, 0.075),
+    k: rand(0.55, 1.35),
+    freq: rand(0.06, 0.18),
+    ph: rand(0, TAU),
+    ampF: rand(0.6, 1.2),
+    bumps: [],
+    pts: new Float32Array((SAMPLES + 1) * 2)
+  };
+  a.edges.push(edge);
+  b.edges.push(edge);
+  return edge;
+}
+
+function createMainLayer() {
+  const layer = {
+    name: "main",
+    parallax: 16,
+    push: 1,
+    alpha: 1,
+    scale: 1,
+    branch: 0.44,
+    ox: 0,
+    oy: 0,
+    nodes: new Map(),
+    edges: [],
+    edgeById: new Map()
+  };
+
+  for (const [id, [ax, ay]] of Object.entries(desktopPositions)) {
+    const kind = id === "core" ? "core" : endpointIds.has(id) ? "endpoint" : "ambient";
+    const wamp = kind === "core" ? 0.004 : kind === "endpoint" ? 0.012 : 0.026;
+    layer.nodes.set(id, makeNode(id, kind, ax, ay, wamp));
+  }
+
+  edges.forEach(([id, from, to], index) => {
+    const edge = makeEdge(id, layer.nodes.get(from), layer.nodes.get(to), index);
+    layer.edges.push(edge);
+    layer.edgeById.set(id, edge);
+  });
+
+  return layer;
+}
+
+function createFarLayer() {
+  const layer = {
+    name: "far",
+    parallax: 6,
+    push: 0.35,
+    alpha: 0.42,
+    scale: 0.62,
+    branch: 0.5,
+    ox: 0,
+    oy: 0,
+    nodes: new Map(),
+    edges: [],
+    edgeById: new Map()
+  };
+
+  const count = isMobile() ? 22 : 34;
+  const list = [];
+  for (let i = 0; i < count; i += 1) {
+    const node = makeNode(`f${i}`, "ambient", rand(-4, 104), rand(-4, 104), 0.035);
+    node.dendrites.length = 0;
+    layer.nodes.set(node.id, node);
+    list.push(node);
+  }
+
+  const seen = new Set();
+  list.forEach((node, index) => {
+    const nearest = list
+      .filter((other) => other !== node)
+      .map((other) => [other, Math.hypot(other.ax - node.ax, (other.ay - node.ay) * 0.7)])
+      .sort((p, q) => p[1] - q[1])
+      .slice(0, 2);
+
+    for (const [other] of nearest) {
+      const key = [node.id, other.id].sort().join("-");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const edge = makeEdge(key, node, other, index);
+      layer.edges.push(edge);
+      layer.edgeById.set(key, edge);
+    }
+  });
+
+  return layer;
+}
+
+function createStars() {
+  const count = Math.round(clamp((W * H) / 9000, 60, 190));
+  stars = Array.from({ length: count }, () => ({
+    x: Math.random(),
+    y: Math.random(),
+    r: Math.random() < 0.9 ? rand(0.3, 0.8) : rand(0.9, 1.4),
+    a: rand(0.12, 0.55),
+    tw: rand(0.1, 0.5),
+    ph: rand(0, TAU),
+    depth: rand(0.15, 1)
+  }));
+}
+
+function syncAnchors() {
+  const positions = isMobile() ? mobilePositions : desktopPositions;
+  for (const [id, [ax, ay]] of Object.entries(positions)) {
+    const node = mainLayer.nodes.get(id);
+    node.ax = ax;
+    node.ay = ay;
+  }
+
+  for (const endpoint of endpoints) {
+    endpointEls.get(endpoint.id)?.classList.toggle("flip", positions[endpoint.id][0] > 55);
+  }
+}
+
+/* ---------- simulation ---------- */
+
+function computeTargets(layer, t) {
+  const main = layer === mainLayer;
+  const cx = W / 2;
+  const cy = main && isMobile() ? H * 0.42 : H / 2;
+  const dir = main ? 1 : -1;
+
+  // the whole tissue breathes and stretches, slightly out of phase per axis
+  const sx = 1 + 0.024 * Math.sin((t * TAU) / 11) * dir;
+  const sy = 1 + 0.024 * Math.sin((t * TAU) / 13.5 + 1.3);
+  const rot = (main ? 0.012 : 0.02) * Math.sin((t * TAU) / 23) * dir;
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+
+  for (const node of layer.nodes.values()) {
+    const dx = ((node.ax / 100) * W - cx) * sx;
+    const dy = ((node.ay / 100) * H - cy) * sy;
+    const [wx, wy] = wander(node.wander, t);
+    const pin = node.kind === "core" ? 0 : 1;
+
+    node.tx = cx + (dx * cos - dy * sin) * pin + wx * node.wamp * minDim + layer.ox;
+    node.ty = cy + (dx * sin + dy * cos) * pin + wy * node.wamp * minDim + layer.oy;
+
+    if (node.kind === "endpoint") {
+      node.tx = clamp(node.tx, 18, W - 18);
+      node.ty = clamp(node.ty, 22, H - 22);
+    }
+  }
+
+  for (const edge of layer.edges) {
+    edge.rest = Math.hypot(edge.b.tx - edge.a.tx, edge.b.ty - edge.a.ty) || 1;
+  }
+}
+
+function stepLayer(layer, dt) {
+  const main = layer === mainLayer;
+
+  for (const node of layer.nodes.values()) {
+    const k = node.kind === "core" ? 34 : node.kind === "endpoint" ? 16 : 9;
+    node.fx = (node.tx - node.x) * k;
+    node.fy = (node.ty - node.y) * k;
+
+    if (pointer.active) {
+      const dx = node.x - pointer.x;
+      const dy = node.y - pointer.y;
+      const d = Math.hypot(dx, dy);
+      const radius = main ? 150 : 110;
+      if (d < radius && d > 0.5) {
+        const s = Math.pow(1 - d / radius, 2) * 900 * layer.push * (node.kind === "ambient" ? 1 : 0.35);
+        node.fx += (dx / d) * s;
+        node.fy += (dy / d) * s;
+      }
+    }
+  }
+
+  // axons behave like soft elastic fibres
+  for (const edge of layer.edges) {
+    const dx = edge.b.x - edge.a.x;
+    const dy = edge.b.y - edge.a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    edge.len = len;
+    const f = ((len - edge.rest * edge.tension) / len) * 4.5;
+    edge.a.fx += dx * f;
+    edge.a.fy += dy * f;
+    edge.b.fx -= dx * f;
+    edge.b.fy -= dy * f;
+    edge.tension += (1 - edge.tension) * (1 - Math.exp(-dt * 1.6));
+    edge.glow *= Math.exp(-dt * 2.4);
+    edge.bumps.length = 0;
+  }
+
+  const damping = Math.exp(-dt * 3.4);
+  for (const node of layer.nodes.values()) {
+    node.vx = (node.vx + node.fx * dt) * damping;
+    node.vy = (node.vy + node.fy * dt) * damping;
+    node.x += node.vx * dt;
+    node.y += node.vy * dt;
+
+    node.flash *= Math.exp(-dt * 3.2);
+    node.v *= Math.exp(-dt * 0.9);
+    node.refractory -= dt;
+    if (node.ring < 1) node.ring = Math.min(1, node.ring + dt * 1.4);
+  }
+}
+
+function snapLayer(layer) {
+  for (const node of layer.nodes.values()) {
+    node.x = node.tx;
+    node.y = node.ty;
+    node.vx = 0;
+    node.vy = 0;
+  }
+  for (const edge of layer.edges) {
+    edge.len = edge.rest;
+  }
+}
+
+function shapeEdge(edge, t) {
+  const { a, b, pts } = edge;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  // slack fibres sag and ripple more, taut ones straighten out
+  const slack = clamp(edge.rest / len, 0.55, 1.7);
+  const loose = slack * slack;
+  const bend = edge.bend * len * loose;
+  const amp = Math.min(len * 0.04, 12) * edge.ampF * loose;
+
+  for (let i = 0; i <= SAMPLES; i += 1) {
+    const s = i / SAMPLES;
+    const env = Math.sin(Math.PI * s);
+    let off = env * (bend + amp * Math.sin(TAU * edge.k * s - t * edge.freq * TAU + edge.ph));
+
+    for (const bump of edge.bumps) {
+      const d = ((s - bump.s) * len) / 16;
+      off += bump.amp * env * Math.exp(-d * d);
+    }
+
+    pts[i * 2] = a.x + dx * s + nx * off;
+    pts[i * 2 + 1] = a.y + dy * s + ny * off;
+  }
+}
+
+function pointAt(edge, s) {
+  const f = clamp(s, 0, 1) * SAMPLES;
+  const i = Math.min(SAMPLES - 1, Math.floor(f));
+  const u = f - i;
+  const p = edge.pts;
+  return [p[i * 2] + (p[i * 2 + 2] - p[i * 2]) * u, p[i * 2 + 1] + (p[i * 2 + 3] - p[i * 2 + 1]) * u];
+}
+
+/* ---------- firing ---------- */
+
+function spawnPulse(layer, edge, dir, options = {}) {
+  if (pulses.length >= MAX_PULSES && !options.route) return;
+
+  pulses.push({
+    layer,
+    edge,
+    dir,
+    s: 0,
+    dur: options.dur ?? clamp(edge.len / rand(170, 300), 0.35, 1.7),
+    strength: options.strength ?? rand(0.75, 1),
+    chain: options.chain ?? [],
+    route: Boolean(options.route)
+  });
+}
+
+function fire(layer, node, fromEdge = null) {
+  if (node.refractory > 0) return;
+
+  node.flash = 1;
+  node.v = 0;
+  node.refractory = rand(1.1, 2.1);
+  node.ring = 0;
+  node.vx += rand(-18, 18);
+  node.vy += rand(-18, 18);
+
+  if (node.kind === "endpoint") flashEndpoint(node.id);
+
+  for (const edge of node.edges) {
+    edge.tension = Math.min(edge.tension, 0.95);
+    if (edge === fromEdge) continue;
+    if (Math.random() < layer.branch) {
+      spawnPulse(layer, edge, edge.a === node ? 1 : -1);
+    }
+  }
+}
+
+function stimulate(layer, node, amount, fromEdge) {
+  node.v += amount * rand(0.5, 0.95);
+  node.flash = Math.max(node.flash, 0.25);
+  if (node.v >= 1) fire(layer, node, fromEdge);
+}
+
+function updatePulses(dt) {
+  for (let i = pulses.length - 1; i >= 0; i -= 1) {
+    const p = pulses[i];
+    p.s += dt / p.dur;
+
+    const s = p.dir > 0 ? p.s : 1 - p.s;
+    p.edge.glow = Math.max(p.edge.glow, p.strength * (p.route ? 0.85 : 0.55));
+    p.edge.bumps.push({ s, amp: (p.route ? 3.2 : 2.2) * p.strength * (p.dir > 0 ? 1 : -1) });
+
+    if (p.s < 1) continue;
+
+    pulses.splice(i, 1);
+    const node = p.dir > 0 ? p.edge.b : p.edge.a;
+
+    if (p.chain.length) {
+      const [next, ...rest] = p.chain;
+      node.flash = Math.max(node.flash, 0.85);
+      node.ring = 0;
+      spawnPulse(p.layer, next.edge, next.dir, { dur: p.dur, strength: p.strength, chain: rest, route: true });
+    } else if (p.route) {
+      node.flash = 1;
+      node.ring = 0;
+      if (node.kind === "endpoint") flashEndpoint(node.id);
+    } else {
+      stimulate(p.layer, node, p.strength, p.edge);
+    }
+  }
+}
+
+function routeChain(id) {
+  let current = mainLayer.nodes.get("core");
+  return (routes[id] || []).map((edgeId) => {
+    const edge = mainLayer.edgeById.get(edgeId);
+    const dir = edge.a === current ? 1 : -1;
+    current = dir > 0 ? edge.b : edge.a;
+    return { edge, dir };
+  });
+}
+
+function fireRoute(id, hopDuration) {
+  const [first, ...rest] = routeChain(id);
+  if (!first) return 0;
+  const core = mainLayer.nodes.get("core");
+  core.flash = 1;
+  core.ring = 0;
+  spawnPulse(mainLayer, first.edge, first.dir, { dur: hopDuration, strength: 1.25, chain: rest, route: true });
+  return (rest.length + 1) * hopDuration;
+}
+
+function flashEndpoint(id) {
+  const el = endpointEls.get(id);
+  if (!el) return;
+  el.classList.add("firing");
+  clearTimeout(el.firingTimer);
+  el.firingTimer = setTimeout(() => el.classList.remove("firing"), 420);
+}
+
+let mainTimer = 1;
+let farTimer = 0.5;
+
+function spontaneous(dt) {
+  mainTimer -= dt;
+  farTimer -= dt;
+
+  if (mainTimer <= 0) {
+    const ambient = [...mainLayer.nodes.values()].filter((n) => n.kind === "ambient");
+    fire(mainLayer, pick(ambient));
+    mainTimer = rand(0.8, 2.4);
+  }
+
+  if (farTimer <= 0) {
+    fire(farLayer, pick([...farLayer.nodes.values()]));
+    farTimer = rand(0.5, 1.6);
+  }
+
+  // brushing through the tissue excites whatever you touch
+  if (pointer.active && pointer.speed > 70) {
+    for (const node of mainLayer.nodes.values()) {
+      if (node.kind !== "ambient") continue;
+      if (Math.hypot(node.x - pointer.x, node.y - pointer.y) < 34) fire(mainLayer, node);
+    }
+  }
+}
+
+/* ---------- drawing ---------- */
+
+function drawStars(t) {
+  ctx.fillStyle = "rgb(214, 228, 240)";
+  for (const star of stars) {
+    const x = (((star.x + t * 0.0012 * star.depth) % 1) * W) - pointer.sx * 4 * star.depth;
+    const y = star.y * H - pointer.sy * 4 * star.depth;
+    ctx.globalAlpha = star.a * (0.55 + 0.45 * Math.sin(t * star.tw * TAU + star.ph));
+    ctx.beginPath();
+    ctx.arc(x, y, star.r, 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawEdges(layer) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const edge of layer.edges) {
+    const alpha = layer.alpha * (0.1 + edge.glow * 0.38 + (edge.route ? 0.26 : 0));
+    ctx.strokeStyle = `rgba(200, 220, 234, ${alpha.toFixed(3)})`;
+    ctx.lineWidth = layer.scale * (0.9 + edge.glow * 0.7 + (edge.route ? 0.4 : 0));
+
+    const p = edge.pts;
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]);
+    for (let i = 1; i <= SAMPLES; i += 1) ctx.lineTo(p[i * 2], p[i * 2 + 1]);
+    ctx.stroke();
+  }
+}
+
+function drawDendrites(layer, t) {
+  ctx.lineWidth = 0.8;
+  for (const node of layer.nodes.values()) {
+    if (!node.dendrites.length) continue;
+    const alpha = layer.alpha * (0.09 + node.flash * 0.35);
+    ctx.strokeStyle = `rgba(200, 220, 234, ${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    for (const d of node.dendrites) {
+      const ang = d.ang + 0.4 * Math.sin(t * d.fr * TAU + d.ph);
+      const len = d.len * (1 + node.flash * 0.25);
+      const tipX = node.x + Math.cos(ang) * len;
+      const tipY = node.y + Math.sin(ang) * len;
+      const bend = ang + d.curl + 0.3 * Math.sin(t * d.fr * 1.7 * TAU + d.ph);
+      ctx.moveTo(node.x, node.y);
+      ctx.quadraticCurveTo(
+        node.x + Math.cos(bend) * len * 0.6,
+        node.y + Math.sin(bend) * len * 0.6,
+        tipX,
+        tipY
+      );
+    }
+    ctx.stroke();
+  }
+}
+
+function drawPulses() {
+  ctx.globalCompositeOperation = "lighter";
+  for (const p of pulses) {
+    const scale = p.layer.scale;
+    const alphaScale = p.layer.alpha;
+    const fade = Math.min(1, p.s * 6, (1 - p.s) * 6 + 0.35);
+    const tail = clamp(46 / p.edge.len, 0.04, 0.4);
+
+    for (let i = 6; i >= 1; i -= 1) {
+      const back = p.s - (tail * i) / 6;
+      if (back < 0) continue;
+      const [x, y] = pointAt(p.edge, p.dir > 0 ? back : 1 - back);
+      const k = 1 - i / 7;
+      drawSprite(pulseSprite, x, y, (8 + 10 * k) * scale * p.strength, 0.28 * k * fade * alphaScale);
+    }
+
+    const [x, y] = pointAt(p.edge, p.dir > 0 ? p.s : 1 - p.s);
+    drawSprite(glowSprite, x, y, 34 * scale * p.strength, 0.5 * fade * alphaScale);
+    drawSprite(pulseSprite, x, y, 11 * scale * p.strength, 1 * fade * alphaScale);
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+}
+
+function drawNodes(layer, t) {
+  ctx.globalCompositeOperation = "lighter";
+  for (const node of layer.nodes.values()) {
+    if (node.kind === "core") {
+      const breathe = 0.5 + 0.5 * Math.sin(t * 0.6 + node.breath);
+      drawSprite(coreSprite, node.x, node.y, 70 + breathe * 16 + node.flash * 70, 0.22 + breathe * 0.06 + node.flash * 0.6);
+    } else {
+      const size = (node.kind === "endpoint" ? 26 : 16) + node.flash * 60;
+      drawSprite(glowSprite, node.x, node.y, size * layer.scale, layer.alpha * (0.07 + node.v * 0.12 + node.flash * 0.8));
+    }
+
+    if (node.ring < 1) {
+      const e = 1 - Math.pow(1 - node.ring, 3);
+      ctx.globalAlpha = layer.alpha * (1 - node.ring) * 0.32;
+      ctx.strokeStyle = "rgb(196, 226, 246)";
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, (4 + e * 36) * layer.scale, 0, TAU);
+      ctx.stroke();
+    }
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+
+  for (const node of layer.nodes.values()) {
+    if (node.kind === "endpoint") continue;
+    const pulse = 1 + 0.12 * Math.sin(t * 0.9 + node.breath);
+    const radius = (node.r * pulse + node.flash * 1.5) * layer.scale;
+    const base = node.kind === "core" ? 0.75 : 0.32;
+    ctx.fillStyle = `rgba(224, 236, 243, ${(layer.alpha * Math.min(1, base + node.flash * 0.65 + node.v * 0.2)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function placeEndpoints() {
+  for (const endpoint of endpoints) {
+    const node = mainLayer.nodes.get(endpoint.id);
+    const el = endpointEls.get(endpoint.id);
+    el.style.translate = `${node.x.toFixed(1)}px ${node.y.toFixed(1)}px`;
+  }
+}
+
+function draw(t) {
+  ctx.clearRect(0, 0, W, H);
+  drawStars(t);
+
+  for (const layer of [farLayer, mainLayer]) {
+    for (const edge of layer.edges) shapeEdge(edge, t);
+    drawEdges(layer);
+    if (layer === mainLayer) drawDendrites(layer, t);
+    drawNodes(layer, t);
+  }
+
+  drawPulses();
+  placeEndpoints();
+}
+
+/* ---------- loop ---------- */
+
+function update(dt) {
+  // parallax drifts with the pointer, or wanders slowly on its own
+  const idleX = 0.25 * Math.sin((time * TAU) / 29);
+  const idleY = 0.25 * Math.cos((time * TAU) / 37);
+  const goalX = pointer.active ? pointer.nx : idleX;
+  const goalY = pointer.active ? pointer.ny : idleY;
+  const ease = 1 - Math.exp(-dt * 1.5);
+  pointer.sx += (goalX - pointer.sx) * ease;
+  pointer.sy += (goalY - pointer.sy) * ease;
+  pointer.speed *= Math.exp(-dt * 6);
+
+  for (const layer of [farLayer, mainLayer]) {
+    layer.ox = -pointer.sx * layer.parallax;
+    layer.oy = -pointer.sy * layer.parallax;
+    computeTargets(layer, time);
+    stepLayer(layer, dt);
+  }
+
+  updatePulses(dt);
+  spontaneous(dt);
+}
+
+function frame(now) {
+  const dt = Math.min(1 / 30, (now - lastFrame) / 1000 || 1 / 60);
+  lastFrame = now;
+  time += dt;
+
+  update(dt);
+  draw(time);
+
+  frameId = requestAnimationFrame(frame);
+}
+
+function renderStill() {
+  for (const layer of [farLayer, mainLayer]) {
+    computeTargets(layer, 0);
+    snapLayer(layer);
+  }
+  draw(0);
+}
+
+function start() {
+  cancelAnimationFrame(frameId);
+  pulses.length = 0;
+
+  if (reducedMotion.matches) {
+    renderStill();
+    return;
+  }
+
+  lastFrame = performance.now();
+  frameId = requestAnimationFrame(frame);
+}
+
+function resize() {
+  const box = network.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = box.width;
+  H = box.height;
+  minDim = Math.min(W, H);
+
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  syncAnchors();
+  createStars();
+
+  for (const layer of [farLayer, mainLayer]) {
+    computeTargets(layer, time);
+    snapLayer(layer);
+  }
+
+  if (reducedMotion.matches) draw(0);
+}
+
+/* ---------- links & interaction ---------- */
 
 function renderLinks() {
   linkLayer.innerHTML = "";
@@ -208,14 +902,18 @@ function renderLinks() {
   for (const endpoint of endpoints) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `link-node ${endpoint.url ? "" : "unconfigured"}`;
+    button.className = `link-node${endpoint.url ? "" : " unconfigured"}`;
     button.dataset.id = endpoint.id;
-    button.innerHTML = `
-      <span>
-        <span class="label">${endpoint.label}</span>
-        <span class="host">${endpoint.host}</span>
-      </span>
-    `;
+
+    const text = document.createElement("span");
+    const label = document.createElement("span");
+    const host = document.createElement("span");
+    label.className = "label";
+    host.className = "host";
+    label.textContent = endpoint.label;
+    host.textContent = endpoint.host;
+    text.append(label, host);
+    button.append(text);
 
     button.addEventListener("mouseenter", () => activateRoute(endpoint.id));
     button.addEventListener("mouseleave", () => deactivateRoute(endpoint.id));
@@ -228,241 +926,23 @@ function renderLinks() {
   }
 }
 
-function setupMotionState(reset = false) {
-  basePositions = currentBasePositions();
-
-  for (const [id, base] of Object.entries(basePositions)) {
-    const existing = motionState.get(id);
-
-    if (!existing || reset) {
-      motionState.set(id, {
-        x: base[0],
-        y: base[1],
-        vx: 0,
-        vy: 0,
-        tx: base[0],
-        ty: base[1]
-      });
-    } else {
-      existing.x = clamp(existing.x, 3, 97);
-      existing.y = clamp(existing.y, 3, 97);
-      existing.tx = base[0];
-      existing.ty = base[1];
-      existing.vx *= 0.25;
-      existing.vy *= 0.25;
-    }
-  }
-
-  chooseMorphTargets();
-}
-
-function chooseMorphTargets() {
-  clearTimeout(morphTimer);
-
-  if (reducedMotion.matches) {
-    for (const [id, base] of Object.entries(basePositions)) {
-      const state = motionState.get(id);
-      if (!state) continue;
-      state.tx = base[0];
-      state.ty = base[1];
-    }
-    return;
-  }
-
-  const mobile = isMobile();
-  const scaleX = randomBetween(mobile ? 0.97 : 0.92, mobile ? 1.035 : 1.085);
-  const scaleY = randomBetween(mobile ? 0.97 : 0.93, mobile ? 1.035 : 1.075);
-  const translateX = randomBetween(mobile ? -0.5 : -1.2, mobile ? 0.5 : 1.2);
-  const translateY = randomBetween(mobile ? -0.45 : -1.0, mobile ? 0.45 : 1.0);
-
-  for (const [id, base] of Object.entries(basePositions)) {
-    const state = motionState.get(id);
-    if (!state) continue;
-
-    const isEndpoint = endpoints.some((endpoint) => endpoint.id === id);
-    const isCore = id === "core";
-
-    const individualDrift = isCore
-      ? (mobile ? 0.12 : 0.28)
-      : isEndpoint
-        ? (mobile ? 0.55 : 1.15)
-        : (mobile ? 1.15 : 2.35);
-
-    const stretch = isCore ? 0 : 1;
-    const dx = (base[0] - 50) * (scaleX - 1) * stretch;
-    const dy = (base[1] - 50) * (scaleY - 1) * stretch;
-
-    const marginX = mobile ? 7 : 4;
-    const marginY = mobile ? 4 : 3;
-
-    state.tx = clamp(
-      base[0] + dx + translateX + randomBetween(-individualDrift, individualDrift),
-      marginX,
-      100 - marginX
-    );
-
-    state.ty = clamp(
-      base[1] + dy + translateY + randomBetween(-individualDrift, individualDrift),
-      marginY,
-      100 - marginY
-    );
-  }
-
-  morphTimer = setTimeout(
-    chooseMorphTargets,
-    randomBetween(mobile ? 4200 : 3600, mobile ? 7600 : 7000)
-  );
-}
-
-function percentPoint(id) {
-  const state = motionState.get(id);
-  const fallback = basePositions[id] || [50, 50];
-
-  return {
-    x: state?.x ?? fallback[0],
-    y: state?.y ?? fallback[1]
-  };
-}
-
-function pixelPoint(id) {
-  const p = percentPoint(id);
-  return {
-    x: (p.x / 100) * dimensions.width,
-    y: (p.y / 100) * dimensions.height
-  };
-}
-
-function curvePath(from, to, index) {
-  const p1 = pixelPoint(from);
-  const p2 = pixelPoint(to);
-  const dx = p2.x - p1.x;
-  const dy = p2.y - p1.y;
-  const length = Math.hypot(dx, dy) || 1;
-
-  const nx = -dy / length;
-  const ny = dx / length;
-  const sign = index % 2 === 0 ? 1 : -1;
-  const bend = Math.min(isMobile() ? 13 : 20, length * 0.052) * sign;
-
-  const mx = (p1.x + p2.x) / 2 + nx * bend;
-  const my = (p1.y + p2.y) / 2 + ny * bend;
-
-  return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} Q ${mx.toFixed(2)} ${my.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
-}
-
-function buildGraph() {
-  const box = network.getBoundingClientRect();
-  dimensions = { width: box.width, height: box.height };
-
-  graph.innerHTML = "";
-  graph.setAttribute("viewBox", `0 0 ${dimensions.width} ${dimensions.height}`);
-
-  edgeEls.clear();
-  ambientNodeEls.clear();
-
-  const linesGroup = svgEl("g");
-  const nodesGroup = svgEl("g");
-  const pulsesGroup = svgEl("g", { id: "pulses" });
-
-  edges.forEach(([id, from, to], index) => {
-    const path = svgEl("path", {
-      id,
-      class: "edge",
-      d: curvePath(from, to, index)
-    });
-
-    edgeEls.set(id, path);
-    linesGroup.appendChild(path);
-  });
-
-  Object.keys(basePositions)
-    .filter((id) => id.startsWith("a"))
-    .forEach((id) => {
-      const p = pixelPoint(id);
-      const circle = svgEl("circle", {
-        class: "ambient-node",
-        cx: p.x,
-        cy: p.y,
-        r: "2.15"
-      });
-
-      ambientNodeEls.set(id, circle);
-      nodesGroup.appendChild(circle);
-    });
-
-  graph.append(linesGroup, nodesGroup, pulsesGroup);
-  renderCurrentPositions();
-}
-
-function renderCurrentPositions() {
-  if (!dimensions.width || !dimensions.height) return;
-
-  edges.forEach(([id, from, to], index) => {
-    edgeEls.get(id)?.setAttribute("d", curvePath(from, to, index));
-  });
-
-  for (const [id, circle] of ambientNodeEls.entries()) {
-    const p = pixelPoint(id);
-    circle.setAttribute("cx", p.x);
-    circle.setAttribute("cy", p.y);
-  }
-
-  for (const endpoint of endpoints) {
-    const p = pixelPoint(endpoint.id);
-    const el = endpointEls.get(endpoint.id);
-    if (!el) continue;
-
-    el.style.left = `${p.x}px`;
-    el.style.top = `${p.y}px`;
-  }
-
-  const core = pixelPoint("core");
-  coreEl.style.left = `${core.x}px`;
-  coreEl.style.top = `${core.y}px`;
-}
-
-function animateNetwork() {
-  const mobile = isMobile();
-  const stiffness = mobile ? 0.0019 : 0.00155;
-  const damping = mobile ? 0.935 : 0.942;
-
-  if (!reducedMotion.matches) {
-    for (const state of motionState.values()) {
-      state.vx += (state.tx - state.x) * stiffness;
-      state.vy += (state.ty - state.y) * stiffness;
-
-      state.vx *= damping;
-      state.vy *= damping;
-
-      state.x += state.vx;
-      state.y += state.vy;
-    }
-
-    renderCurrentPositions();
-  }
-
-  animationFrame = requestAnimationFrame(animateNetwork);
+function setRouteHighlight(id, on) {
+  for (const { edge } of routeChain(id)) edge.route = on;
+  endpointEls.get(id)?.classList.toggle("active", on);
+  if (reducedMotion.matches) draw(0);
 }
 
 function activateRoute(id) {
-  const route = routes[id] || [];
-  const endpoint = endpointEls.get(id);
+  setRouteHighlight(id, true);
+  if (!reducedMotion.matches) fireRoute(id, 0.3);
 
-  endpoint?.classList.add("active");
-  route.forEach((edgeId) => edgeEls.get(edgeId)?.classList.add("route-active"));
-
-  if (!reducedMotion.matches) {
-    fireRoute(route, 72, 330);
-  }
-
-  const endpointData = endpoints.find((item) => item.id === id);
-  setHint(endpointData?.url ? endpointData.host : `${endpointData?.label ?? id} · not connected yet`);
+  const endpoint = endpoints.find((item) => item.id === id);
+  setHint(endpoint?.url ? endpoint.host : `${endpoint?.label ?? id} · not connected yet`);
 }
 
 function deactivateRoute(id) {
-  endpointEls.get(id)?.classList.remove("active");
-  (routes[id] || []).forEach((edgeId) => edgeEls.get(edgeId)?.classList.remove("route-active"));
-  setHint("move through the network", false);
+  setRouteHighlight(id, false);
+  setHint(IDLE_HINT, false);
 }
 
 function setHint(text, flash = true) {
@@ -475,129 +955,10 @@ function setHint(text, flash = true) {
   }
 }
 
-function pulseAlong(edgeId, duration = 360, reverse = false) {
-  return new Promise((resolve) => {
-    const path = edgeEls.get(edgeId);
-    const layer = graph.querySelector("#pulses");
-
-    if (!path || !layer || reducedMotion.matches) {
-      resolve();
-      return;
-    }
-
-    const pulse = svgEl("circle", {
-      class: "pulse",
-      r: isMobile() ? "2.4" : "2.7"
-    });
-
-    layer.appendChild(pulse);
-
-    const start = performance.now();
-
-    function frame(now) {
-      const livePath = edgeEls.get(edgeId);
-
-      if (!livePath || !pulse.isConnected) {
-        pulse.remove();
-        resolve();
-        return;
-      }
-
-      const total = livePath.getTotalLength();
-      const t = Math.min(1, (now - start) / duration);
-      const eased = t < 0.5
-        ? 2 * t * t
-        : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
-      const progress = reverse ? 1 - eased : eased;
-      const p = livePath.getPointAtLength(total * progress);
-
-      pulse.setAttribute("cx", p.x);
-      pulse.setAttribute("cy", p.y);
-
-      const fadeIn = Math.min(1, t * 5);
-      const fadeOut = Math.min(1, (1 - t) * 5);
-      pulse.style.opacity = String(Math.min(fadeIn, fadeOut));
-
-      if (t < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        pulse.remove();
-        resolve();
-      }
-    }
-
-    requestAnimationFrame(frame);
-  });
-}
-
-function fireRoute(route, stagger = 80, duration = 320) {
-  route.forEach((edgeId, index) => {
-    setTimeout(() => pulseAlong(edgeId, duration), index * stagger);
-  });
-}
-
-function connectedEdges(nodeId) {
-  return edges.filter(([, from, to]) => from === nodeId || to === nodeId);
-}
-
-function otherEnd(edge, nodeId) {
-  return edge[1] === nodeId ? edge[2] : edge[1];
-}
-
-async function ambientFire() {
-  if (reducedMotion.matches || fireBusy) {
-    scheduleAmbient();
-    return;
-  }
-
-  fireBusy = true;
-
-  const ambientIds = Object.keys(basePositions).filter((id) => id.startsWith("a"));
-  let current = ambientIds[Math.floor(Math.random() * ambientIds.length)];
-  const hopCount = 1 + Math.floor(Math.random() * (isMobile() ? 2 : 3));
-  const visited = new Set();
-
-  for (let hop = 0; hop < hopCount; hop += 1) {
-    const options = connectedEdges(current).filter(([id]) => !visited.has(id));
-    if (!options.length) break;
-
-    const edge = options[Math.floor(Math.random() * options.length)];
-    visited.add(edge[0]);
-
-    const reverse = edge[2] === current;
-    const next = otherEnd(edge, current);
-
-    await pulseAlong(edge[0], 330 + Math.random() * 170, reverse);
-
-    const neuron = ambientNodeEls.get(next);
-    if (neuron) {
-      neuron.classList.add("firing");
-      setTimeout(() => neuron.classList.remove("firing"), 240);
-    }
-
-    current = next;
-  }
-
-  fireBusy = false;
-  scheduleAmbient();
-}
-
-function scheduleAmbient() {
-  clearTimeout(ambientTimer);
-  if (reducedMotion.matches) return;
-
-  const delay = isMobile()
-    ? 1500 + Math.random() * 2800
-    : 1050 + Math.random() * 2400;
-
-  ambientTimer = setTimeout(ambientFire, delay);
-}
-
 function openEndpoint(endpoint, event) {
   if (!endpoint.url) {
-    setHint(`${endpoint.label} · endpoint not connected yet`);
     activateRoute(endpoint.id);
+    setHint(`${endpoint.label} · endpoint not connected yet`);
     setTimeout(() => deactivateRoute(endpoint.id), 900);
     return;
   }
@@ -607,54 +968,66 @@ function openEndpoint(endpoint, event) {
     return;
   }
 
-  const route = routes[endpoint.id] || [];
-
   if (reducedMotion.matches) {
     window.location.href = endpoint.url;
     return;
   }
 
-  activateRoute(endpoint.id);
+  setRouteHighlight(endpoint.id, true);
   setHint(`routing to ${endpoint.host}`);
-
-  route.forEach((edgeId, index) => {
-    setTimeout(() => pulseAlong(edgeId, 300), index * 85);
-  });
-
-  const delay = 360 + Math.max(0, route.length - 1) * 85;
+  const travel = fireRoute(endpoint.id, 0.17);
 
   setTimeout(() => {
     window.location.href = endpoint.url;
-  }, delay);
+  }, travel * 1000 + 90);
 }
 
-function handleResize() {
-  clearTimeout(resizeTimer);
+function handlePointer(event) {
+  const box = network.getBoundingClientRect();
+  const x = event.clientX - box.left;
+  const y = event.clientY - box.top;
+  const now = performance.now();
 
-  resizeTimer = setTimeout(() => {
-    setupMotionState(true);
-    buildGraph();
-  }, 100);
+  if (pointer.active) {
+    const elapsed = Math.max(8, now - pointer.last);
+    const speed = (Math.hypot(x - pointer.x, y - pointer.y) / elapsed) * 1000;
+    pointer.speed = Math.max(pointer.speed * 0.6, speed);
+  }
+
+  pointer.x = x;
+  pointer.y = y;
+  pointer.nx = x / W - 0.5;
+  pointer.ny = y / H - 0.5;
+  pointer.last = now;
+  pointer.active = true;
 }
 
-function handleMotionPreference() {
-  setupMotionState(true);
-  buildGraph();
-  scheduleAmbient();
+function releasePointer(event) {
+  if (event.pointerType === "mouse" && event.type === "pointerup") return;
+  pointer.active = false;
+  pointer.x = pointer.y = -9999;
 }
+
+/* ---------- boot ---------- */
 
 renderLinks();
-setupMotionState(true);
-buildGraph();
-scheduleAmbient();
-animationFrame = requestAnimationFrame(animateNetwork);
+mainLayer = createMainLayer();
+farLayer = createFarLayer();
+resize();
+start();
 
-window.addEventListener("resize", handleResize);
-window.addEventListener("orientationchange", handleResize);
-reducedMotion.addEventListener?.("change", handleMotionPreference);
+// ResizeObserver fires before paint, so the canvas never draws at a stale, stretched size
+new ResizeObserver(resize).observe(network);
 
-window.addEventListener("pagehide", () => {
-  cancelAnimationFrame(animationFrame);
-  clearTimeout(ambientTimer);
-  clearTimeout(morphTimer);
+window.addEventListener("pointermove", handlePointer, { passive: true });
+window.addEventListener("pointerdown", handlePointer, { passive: true });
+window.addEventListener("pointerup", releasePointer);
+window.addEventListener("pointercancel", releasePointer);
+document.documentElement.addEventListener("pointerleave", releasePointer);
+
+reducedMotion.addEventListener?.("change", start);
+
+window.addEventListener("pagehide", () => cancelAnimationFrame(frameId));
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) start();
 });
