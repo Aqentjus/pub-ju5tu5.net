@@ -2,19 +2,26 @@
 
 A minimalist link hub for Justus.
 
-Instead of a normal link-in-bio list, the page is a living neural network floating in space: `justus.net` sits at the core, public destinations are neurons in the tissue, and signals fire and cascade through soft, stretching axons.
+Instead of a normal link-in-bio list, the page is a living 3D neural network floating in space. `justus.net` sits at the core of a cloud of a few hundred neurons, and each destination is a hub neuron somewhere in the tissue.
+
+## How it behaves
+
+- **3D cloud** — neurons fill a lumpy, brain-like volume. The camera slowly orbits it, with depth fog, soft near-lens blur and a parallax starfield.
+- **Living tissue** — a slow flow field moves through the volume, so neighbouring neurons drift together and axons stretch and sway. A neuron that fires twitches its neighbours toward it.
+- **Firing** — neurons charge up, fire and propagate spikes along curved axons, with refractory periods so cascades die out naturally.
+- **Plasticity** — axons that carry signals get stronger, unused ones wither and retract, and new ones grow toward nearby neurons. The network slowly rewires itself.
+- **Routes** — the path from the core to each hub is recomputed as the network rewires and prefers strong axons. Hovering a link turns the camera toward its hub and fires a warm signal down the route, which strengthens it.
+- **Brainwaves** — every ~20 seconds a wave sweeps out from the core across the whole network.
 
 ## Interaction
 
-- Neurons wander on layered sine drift while the whole network slowly breathes, stretches and rotates.
-- Axons are elastic springs: they ripple when slack, straighten when taut, and bulge as a signal passes.
-- Neurons charge up, fire, and propagate pulses to neighbours, with refractory periods so cascades die out naturally.
-- A starfield and a dim, distant second network give depth, with parallax following the pointer.
-- Moving the pointer through the network pushes neurons aside and makes them fire.
-- Hovering or focusing a destination fires a signal from the core along its route.
-- Clicking a configured destination sends a final pulse through its route before opening it.
+- Drag to turn the cloud, scroll to zoom.
+- Click or tap to spark the nearest neuron.
+- Move the cursor through the cloud to excite the neurons it passes.
+- The index at the bottom is the accessible, keyboard-friendly list of links. Hovering or focusing an item works the same as hovering its floating label.
+- Hub labels fade while their hub passes behind the title.
 - Unconfigured destinations stay visible but subdued until their public URL is added.
-- Motion respects `prefers-reduced-motion`.
+- With `prefers-reduced-motion`, the page renders a still frame and links open immediately.
 
 ## Configure links
 
@@ -43,7 +50,7 @@ Then open `http://localhost:8000`.
 
 ## Files
 
-- `index.html` — minimal page shell
+- `index.html` — page shell: canvas, title, hub labels and link index
 - `style.css` — typography, link positioning, and backdrop
 - `script.js` — graph topology, canvas physics and rendering, firing, and navigation
 - `.nojekyll` — keeps static hosting simple

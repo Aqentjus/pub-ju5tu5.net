@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0b0d10" />
+  <meta name="theme-color" content="#07090c" />
   <meta name="description" content="Justus.net — a small map of where to find me online." />
   <title>Justus.net</title>
   <link rel="stylesheet" href="./style.css" />
@@ -11,18 +11,21 @@
 </head>
 <body>
   <main class="page">
+    <section class="network" id="network" aria-label="A living neural network linking to Justus around the internet">
+      <canvas class="graph" id="graph" aria-hidden="true"></canvas>
+      <div class="link-layer" id="link-layer"></div>
+    </section>
+
     <div class="intro">
       <p class="kicker">justus.net</p>
       <h1>Justus</h1>
       <p class="subtitle">A small map of where to find me online.</p>
     </div>
 
-    <section class="network" id="network" aria-label="Links to Justus around the internet">
-      <canvas class="graph" id="graph" aria-hidden="true"></canvas>
-      <div class="link-layer" id="link-layer"></div>
-    </section>
-
-    <p class="hint" id="hint" aria-live="polite">move through the network</p>
+    <footer class="dock">
+      <p class="hint" id="hint" aria-live="polite"></p>
+      <nav class="index" id="index" aria-label="Links"></nav>
+    </footer>
   </main>
 </body>
 </html>

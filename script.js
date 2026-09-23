@@ -37,836 +37,931 @@ const endpoints = [
   }
 ];
 
-const desktopPositions = {
-  core: [50, 50],
-  github: [18, 24],
-  projects: [78, 23],
-  linkedin: [87, 56],
-  email: [69, 80],
-  steam: [28, 80],
-  discord: [12, 56],
-
-  a1: [30, 15],
-  a2: [43, 20],
-  a3: [62, 16],
-  a4: [72, 35],
-  a5: [90, 34],
-  a6: [82, 73],
-  a7: [54, 84],
-  a8: [42, 72],
-  a9: [11, 35],
-  a10: [33, 42],
-  a11: [61, 61],
-  a12: [76, 58],
-  a13: [40, 59],
-  a14: [22, 63],
-  a15: [56, 34],
-  a16: [50, 8],
-  a17: [95, 69],
-  a18: [7, 78]
-};
-
-const mobilePositions = {
-  core: [50, 42],
-  github: [19, 18],
-  projects: [79, 18],
-  linkedin: [84, 48],
-  email: [72, 75],
-  steam: [28, 77],
-  discord: [15, 49],
-
-  a1: [33, 10],
-  a2: [48, 15],
-  a3: [66, 10],
-  a4: [69, 29],
-  a5: [91, 31],
-  a6: [85, 66],
-  a7: [55, 88],
-  a8: [43, 68],
-  a9: [9, 31],
-  a10: [32, 31],
-  a11: [61, 54],
-  a12: [76, 48],
-  a13: [39, 53],
-  a14: [22, 59],
-  a15: [56, 28],
-  a16: [50, 4],
-  a17: [94, 78],
-  a18: [7, 72]
-};
-
-const edges = [
-  ["e01", "core", "a10"],
-  ["e02", "core", "a13"],
-  ["e03", "core", "a15"],
-  ["e04", "core", "a11"],
-
-  ["e05", "github", "a1"],
-  ["e06", "github", "a9"],
-  ["e07", "a1", "a10"],
-  ["e08", "a1", "a2"],
-  ["e09", "a2", "a10"],
-  ["e10", "a2", "a15"],
-
-  ["e11", "projects", "a3"],
-  ["e12", "projects", "a4"],
-  ["e13", "a3", "a15"],
-  ["e14", "a3", "a2"],
-  ["e15", "a4", "a15"],
-  ["e16", "a4", "a12"],
-
-  ["e17", "linkedin", "a5"],
-  ["e18", "linkedin", "a12"],
-  ["e19", "a5", "a4"],
-  ["e20", "a12", "a11"],
-
-  ["e21", "email", "a6"],
-  ["e22", "a6", "a7"],
-  ["e23", "a6", "a12"],
-  ["e24", "a7", "a11"],
-
-  ["e25", "steam", "a8"],
-  ["e26", "steam", "a18"],
-  ["e27", "a8", "a13"],
-  ["e28", "a8", "a14"],
-  ["e29", "a18", "a14"],
-
-  ["e30", "discord", "a9"],
-  ["e31", "discord", "a14"],
-  ["e32", "a9", "a10"],
-  ["e33", "a14", "a13"],
-
-  ["e34", "a11", "a12"],
-  ["e35", "a11", "a7"],
-  ["e36", "a13", "a8"],
-  ["e37", "a10", "a14"],
-  ["e38", "a15", "a16"],
-  ["e39", "a3", "a16"],
-  ["e40", "a12", "a17"],
-  ["e41", "a6", "a17"]
-];
-
-const routes = {
-  github: ["e01", "e07", "e05"],
-  projects: ["e03", "e13", "e11"],
-  linkedin: ["e04", "e20", "e18"],
-  email: ["e04", "e24", "e22", "e21"],
-  steam: ["e02", "e27", "e25"],
-  discord: ["e01", "e32", "e30"]
-};
-
 const TAU = Math.PI * 2;
-const SAMPLES = 22;
-const MAX_PULSES = 64;
-const IDLE_HINT = "move through the network";
+const SEG = 12;
+const MAX_SPIKES = 110;
+const HOME_PITCH = 0.16;
 
 const canvas = document.querySelector("#graph");
 const ctx = canvas.getContext("2d");
 const network = document.querySelector("#network");
 const linkLayer = document.querySelector("#link-layer");
+const indexNav = document.querySelector("#index");
+const intro = document.querySelector(".intro");
 const hint = document.querySelector("#hint");
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const endpointIds = new Set(endpoints.map((endpoint) => endpoint.id));
-const endpointEls = new Map();
+const coarsePointer = window.matchMedia("(pointer: coarse)");
 
-const pointer = { x: -9999, y: -9999, nx: 0, ny: 0, sx: 0, sy: 0, speed: 0, active: false, last: 0 };
-const pulses = [];
+const view = { W: 0, H: 0, cx: 0, cy: 0, f: 1, portrait: null, title: null };
+const cam = {
+  yaw: 0.6,
+  pitch: HOME_PITCH,
+  yawVel: 0,
+  pitchVel: 0,
+  dist: 2.7,
+  targetDist: 2.7,
+  spin: 0.03,
+  spinScale: 1,
+  offYaw: 0,
+  offPitch: 0,
+  cyaw: 1,
+  syaw: 0,
+  cp: 1,
+  sp: 0
+};
+const pointer = { x: 0, y: 0, nx: 0, ny: 0, down: false, dragging: false, startX: 0, startY: 0, lastX: 0, lastY: 0, lastT: 0, speed: 0, inside: false };
 
-let W = 0;
-let H = 0;
-let minDim = 1;
+let shape = { sx: 1.3, sy: 0.82, sz: 1.1 };
+let neurons = [];
+let axons = [];
+let pulses = [];
+let stars = [];
+let sparks = [];
+let core = null;
+const hubs = new Map();
+const labelEls = new Map();
+const indexEls = new Map();
+let routes = new Map();
+let children = new Map();
+let routesDirty = true;
+let focusedId = null;
+
 let time = 0;
 let lastFrame = 0;
 let frameId = 0;
 let hintTimer;
-let mainLayer;
-let farLayer;
-let stars = [];
+let routeTimer = 0;
+let spontaneousTimer = 1;
+let plasticityTimer = 4;
+let waveTimer = 6;
+
+const tmp = new Float32Array(4);
 
 const rand = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const pick = (items) => items[Math.floor(Math.random() * items.length)];
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
-function isMobile() {
-  return window.innerWidth <= 760;
+function randomVector(scale) {
+  const u = rand(-1, 1);
+  const a = rand(0, TAU);
+  const r = Math.sqrt(1 - u * u);
+  return [Math.cos(a) * r * scale, u * scale, Math.sin(a) * r * scale];
 }
 
 /* ---------- glow sprites ---------- */
 
-function makeSprite(rgb, falloff = 0.22) {
+function makeSprite(rgb, core = 0.2) {
   const size = 128;
   const sprite = document.createElement("canvas");
   sprite.width = sprite.height = size;
   const g = sprite.getContext("2d");
   const gradient = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
   gradient.addColorStop(0, `rgba(${rgb}, 1)`);
-  gradient.addColorStop(falloff, `rgba(${rgb}, 0.32)`);
-  gradient.addColorStop(0.55, `rgba(${rgb}, 0.07)`);
+  gradient.addColorStop(core, `rgba(${rgb}, 0.34)`);
+  gradient.addColorStop(0.55, `rgba(${rgb}, 0.06)`);
   gradient.addColorStop(1, `rgba(${rgb}, 0)`);
   g.fillStyle = gradient;
   g.fillRect(0, 0, size, size);
   return sprite;
 }
 
-const glowSprite = makeSprite("186, 222, 246");
-const pulseSprite = makeSprite("228, 244, 255", 0.12);
-const coreSprite = makeSprite("205, 228, 244", 0.3);
+const sprites = {
+  glow: makeSprite("176, 214, 244"),
+  soma: makeSprite("232, 244, 255", 0.1),
+  core: makeSprite("206, 228, 246", 0.28),
+  warm: makeSprite("255, 222, 188", 0.12),
+  wave: makeSprite("160, 232, 255", 0.12)
+};
 
 function drawSprite(sprite, x, y, size, alpha) {
-  if (alpha <= 0.004) return;
+  if (alpha <= 0.005 || size <= 0.2) return;
   ctx.globalAlpha = Math.min(1, alpha);
   ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
 }
 
-/* ---------- smooth wandering (layered sines) ---------- */
+/* ---------- world generation ---------- */
 
-function makeWander() {
-  const comps = [];
-  for (let i = 0; i < 3; i += 1) {
-    comps.push({
-      fx: rand(0.025, 0.07) * (i + 1),
-      fy: rand(0.025, 0.07) * (i + 1),
-      px: rand(0, TAU),
-      py: rand(0, TAU),
-      a: 1 / ((i + 1.2) * 1.6)
-    });
-  }
-  return comps;
-}
-
-function wander(comps, t) {
-  let x = 0;
-  let y = 0;
-  for (const c of comps) {
-    x += c.a * Math.sin(t * c.fx * TAU + c.px);
-    y += c.a * Math.cos(t * c.fy * TAU + c.py);
-  }
-  return [x, y];
-}
-
-/* ---------- layers ---------- */
-
-function makeNode(id, kind, ax, ay, wamp) {
-  const dendrites = [];
-  if (kind === "ambient") {
-    const count = 2 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < count; i += 1) {
-      dendrites.push({
-        ang: rand(0, TAU),
-        len: rand(7, 20),
-        ph: rand(0, TAU),
-        fr: rand(0.08, 0.2),
-        curl: rand(-0.6, 0.6)
-      });
-    }
-  }
-
-  return {
-    id,
+function makeNeuron(x, y, z, kind) {
+  const neuron = {
+    i: neurons.length,
     kind,
-    ax,
-    ay,
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    tx: 0,
-    ty: 0,
-    fx: 0,
-    fy: 0,
-    wander: makeWander(),
-    wamp,
-    r: kind === "core" ? 3.2 : rand(1.6, 2.5),
+    bx: x,
+    by: y,
+    bz: z,
+    x,
+    y,
+    z,
+    kx: 0,
+    ky: 0,
+    kz: 0,
+    kvx: 0,
+    kvy: 0,
+    kvz: 0,
+    px: 0,
+    py: 0,
+    ps: 0,
+    pf: 0,
+    size: kind === "core" ? 1.8 : kind === "hub" ? 1.35 : rand(0.55, 1.1),
+    ph: rand(0, TAU),
     v: 0,
     flash: 0,
     refractory: 0,
     ring: 1,
-    breath: rand(0, TAU),
-    dendrites,
-    edges: []
+    endpoint: null,
+    axons: []
   };
+  neurons.push(neuron);
+  return neuron;
 }
 
-function makeEdge(id, a, b, index) {
-  const edge = {
-    id,
+function distance(a, b) {
+  return Math.hypot(a.bx - b.bx, a.by - b.by, a.bz - b.bz);
+}
+
+function makeAxon(a, b, state = "live") {
+  const len = distance(a, b);
+  const axon = {
     a,
     b,
-    rest: 1,
-    len: 1,
-    tension: 1,
+    len,
+    state,
+    grow: state === "live" ? 1 : 0,
+    weight: state === "live" ? rand(0.35, 0.95) : 0.4,
     glow: 0,
     route: false,
-    bend: (index % 2 === 0 ? 1 : -1) * rand(0.025, 0.075),
-    k: rand(0.55, 1.35),
-    freq: rand(0.06, 0.18),
+    m1: randomVector(len * 0.26),
+    m2: randomVector(len * 0.26),
+    s1: randomVector(len * 0.12),
+    s2: randomVector(len * 0.12),
+    freq: rand(0.05, 0.13),
     ph: rand(0, TAU),
-    ampF: rand(0.6, 1.2),
-    bumps: [],
-    pts: new Float32Array((SAMPLES + 1) * 2)
+    pts: new Float32Array((SEG + 1) * 4)
   };
-  a.edges.push(edge);
-  b.edges.push(edge);
-  return edge;
+  a.axons.push(axon);
+  b.axons.push(axon);
+  axons.push(axon);
+  return axon;
 }
 
-function createMainLayer() {
-  const layer = {
-    name: "main",
-    parallax: 16,
-    push: 1,
-    alpha: 1,
-    scale: 1,
-    branch: 0.44,
-    ox: 0,
-    oy: 0,
-    nodes: new Map(),
-    edges: [],
-    edgeById: new Map()
-  };
+function connected(a, b) {
+  return a.axons.some((axon) => axon.a === b || axon.b === b);
+}
 
-  for (const [id, [ax, ay]] of Object.entries(desktopPositions)) {
-    const kind = id === "core" ? "core" : endpointIds.has(id) ? "endpoint" : "ambient";
-    const wamp = kind === "core" ? 0.004 : kind === "endpoint" ? 0.012 : 0.026;
-    layer.nodes.set(id, makeNode(id, kind, ax, ay, wamp));
-  }
+function lumpiness(dx, dy, dz) {
+  return 0.8 + 0.13 * Math.sin(dx * 3.1 + 0.7) * Math.cos(dy * 2.4 - 0.3) + 0.07 * Math.sin(dz * 4.2 + dx * 1.3);
+}
 
-  edges.forEach(([id, from, to], index) => {
-    const edge = makeEdge(id, layer.nodes.get(from), layer.nodes.get(to), index);
-    layer.edges.push(edge);
-    layer.edgeById.set(id, edge);
+function generate() {
+  neurons = [];
+  axons = [];
+  pulses = [];
+  hubs.clear();
+
+  const portrait = view.H > view.W * 1.1;
+  shape = portrait ? { sx: 1, sy: 1.65, sz: 1 } : { sx: 1.3, sy: 0.82, sz: 1.1 };
+
+  core = makeNeuron(0, 0, 0, "core");
+
+  endpoints.forEach((endpoint, index) => {
+    const az = (index / endpoints.length) * TAU + 0.35;
+    const el = (index % 2 ? -1 : 1) * 0.34 + rand(-0.08, 0.08);
+    const r = 0.8;
+    const hub = makeNeuron(
+      Math.cos(el) * Math.sin(az) * r * shape.sx,
+      Math.sin(el) * r * shape.sy,
+      Math.cos(el) * Math.cos(az) * r * shape.sz,
+      "hub"
+    );
+    hub.endpoint = endpoint;
+    hubs.set(endpoint.id, hub);
   });
 
-  return layer;
-}
+  const count = Math.min(view.W, view.H) < 560 ? 150 : 240;
+  const spacing = count > 200 ? 0.1 : 0.12;
+  let tries = 0;
 
-function createFarLayer() {
-  const layer = {
-    name: "far",
-    parallax: 6,
-    push: 0.35,
-    alpha: 0.42,
-    scale: 0.62,
-    branch: 0.5,
-    ox: 0,
-    oy: 0,
-    nodes: new Map(),
-    edges: [],
-    edgeById: new Map()
-  };
+  while (neurons.length < count && tries < count * 80) {
+    tries += 1;
+    const x = rand(-1, 1);
+    const y = rand(-1, 1);
+    const z = rand(-1, 1);
+    const r = Math.hypot(x, y, z);
+    if (r > 1 || r < 0.08 || r > lumpiness(x / r, y / r, z / r)) continue;
 
-  const count = isMobile() ? 22 : 34;
-  const list = [];
-  for (let i = 0; i < count; i += 1) {
-    const node = makeNode(`f${i}`, "ambient", rand(-4, 104), rand(-4, 104), 0.035);
-    node.dendrites.length = 0;
-    layer.nodes.set(node.id, node);
-    list.push(node);
+    const candidate = { bx: x * shape.sx, by: y * shape.sy, bz: z * shape.sz };
+    if (neurons.some((n) => distance(n, candidate) < spacing)) continue;
+    makeNeuron(candidate.bx, candidate.by, candidate.bz, "ambient");
   }
 
-  const seen = new Set();
-  list.forEach((node, index) => {
-    const nearest = list
-      .filter((other) => other !== node)
-      .map((other) => [other, Math.hypot(other.ax - node.ax, (other.ay - node.ay) * 0.7)])
-      .sort((p, q) => p[1] - q[1])
-      .slice(0, 2);
+  // a minimum spanning tree keeps everything reachable from the core…
+  const inTree = new Uint8Array(neurons.length);
+  const best = new Float64Array(neurons.length).fill(Infinity);
+  const link = new Array(neurons.length).fill(null);
+  best[0] = 0;
 
-    for (const [other] of nearest) {
-      const key = [node.id, other.id].sort().join("-");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const edge = makeEdge(key, node, other, index);
-      layer.edges.push(edge);
-      layer.edgeById.set(key, edge);
+  for (let step = 0; step < neurons.length; step += 1) {
+    let u = -1;
+    for (let i = 0; i < neurons.length; i += 1) {
+      if (!inTree[i] && (u === -1 || best[i] < best[u])) u = i;
     }
-  });
+    inTree[u] = 1;
+    if (link[u] !== null) makeAxon(neurons[link[u]], neurons[u]);
 
-  return layer;
-}
-
-function createStars() {
-  const count = Math.round(clamp((W * H) / 9000, 60, 190));
-  stars = Array.from({ length: count }, () => ({
-    x: Math.random(),
-    y: Math.random(),
-    r: Math.random() < 0.9 ? rand(0.3, 0.8) : rand(0.9, 1.4),
-    a: rand(0.12, 0.55),
-    tw: rand(0.1, 0.5),
-    ph: rand(0, TAU),
-    depth: rand(0.15, 1)
-  }));
-}
-
-function syncAnchors() {
-  const positions = isMobile() ? mobilePositions : desktopPositions;
-  for (const [id, [ax, ay]] of Object.entries(positions)) {
-    const node = mainLayer.nodes.get(id);
-    node.ax = ax;
-    node.ay = ay;
-  }
-
-  for (const endpoint of endpoints) {
-    endpointEls.get(endpoint.id)?.classList.toggle("flip", positions[endpoint.id][0] > 55);
-  }
-}
-
-/* ---------- simulation ---------- */
-
-function computeTargets(layer, t) {
-  const main = layer === mainLayer;
-  const cx = W / 2;
-  const cy = main && isMobile() ? H * 0.42 : H / 2;
-  const dir = main ? 1 : -1;
-
-  // the whole tissue breathes and stretches, slightly out of phase per axis
-  const sx = 1 + 0.024 * Math.sin((t * TAU) / 11) * dir;
-  const sy = 1 + 0.024 * Math.sin((t * TAU) / 13.5 + 1.3);
-  const rot = (main ? 0.012 : 0.02) * Math.sin((t * TAU) / 23) * dir;
-  const cos = Math.cos(rot);
-  const sin = Math.sin(rot);
-
-  for (const node of layer.nodes.values()) {
-    const dx = ((node.ax / 100) * W - cx) * sx;
-    const dy = ((node.ay / 100) * H - cy) * sy;
-    const [wx, wy] = wander(node.wander, t);
-    const pin = node.kind === "core" ? 0 : 1;
-
-    node.tx = cx + (dx * cos - dy * sin) * pin + wx * node.wamp * minDim + layer.ox;
-    node.ty = cy + (dx * sin + dy * cos) * pin + wy * node.wamp * minDim + layer.oy;
-
-    if (node.kind === "endpoint") {
-      node.tx = clamp(node.tx, 18, W - 18);
-      node.ty = clamp(node.ty, 22, H - 22);
-    }
-  }
-
-  for (const edge of layer.edges) {
-    edge.rest = Math.hypot(edge.b.tx - edge.a.tx, edge.b.ty - edge.a.ty) || 1;
-  }
-}
-
-function stepLayer(layer, dt) {
-  const main = layer === mainLayer;
-
-  for (const node of layer.nodes.values()) {
-    const k = node.kind === "core" ? 34 : node.kind === "endpoint" ? 16 : 9;
-    node.fx = (node.tx - node.x) * k;
-    node.fy = (node.ty - node.y) * k;
-
-    if (pointer.active) {
-      const dx = node.x - pointer.x;
-      const dy = node.y - pointer.y;
-      const d = Math.hypot(dx, dy);
-      const radius = main ? 150 : 110;
-      if (d < radius && d > 0.5) {
-        const s = Math.pow(1 - d / radius, 2) * 900 * layer.push * (node.kind === "ambient" ? 1 : 0.35);
-        node.fx += (dx / d) * s;
-        node.fy += (dy / d) * s;
+    for (let i = 0; i < neurons.length; i += 1) {
+      if (inTree[i]) continue;
+      const d = distance(neurons[u], neurons[i]);
+      if (d < best[i]) {
+        best[i] = d;
+        link[i] = u;
       }
     }
   }
 
-  // axons behave like soft elastic fibres
-  for (const edge of layer.edges) {
-    const dx = edge.b.x - edge.a.x;
-    const dy = edge.b.y - edge.a.y;
-    const len = Math.hypot(dx, dy) || 1;
-    edge.len = len;
-    const f = ((len - edge.rest * edge.tension) / len) * 4.5;
-    edge.a.fx += dx * f;
-    edge.a.fy += dy * f;
-    edge.b.fx -= dx * f;
-    edge.b.fy -= dy * f;
-    edge.tension += (1 - edge.tension) * (1 - Math.exp(-dt * 1.6));
-    edge.glow *= Math.exp(-dt * 2.4);
-    edge.bumps.length = 0;
+  // …and a few nearest-neighbour links make it a mesh rather than a tree
+  for (const n of neurons) {
+    const nearest = neurons
+      .filter((other) => other !== n)
+      .map((other) => [other, distance(n, other)])
+      .sort((p, q) => p[1] - q[1])
+      .slice(0, 3);
+
+    for (const [other, d] of nearest) {
+      if (d < 0.5 && !connected(n, other)) makeAxon(n, other);
+    }
   }
 
-  const damping = Math.exp(-dt * 3.4);
-  for (const node of layer.nodes.values()) {
-    node.vx = (node.vx + node.fx * dt) * damping;
-    node.vy = (node.vy + node.fy * dt) * damping;
-    node.x += node.vx * dt;
-    node.y += node.vy * dt;
+  const starCount = Math.round(clamp((view.W * view.H) / 4200, 160, 420));
+  stars = Array.from({ length: starCount }, () => {
+    const [x, y, z] = randomVector(rand(3.2, 9));
+    return { x, y, z, r: Math.random() < 0.92 ? rand(0.4, 0.9) : rand(1, 1.6), a: rand(0.15, 0.6), tw: rand(0.1, 0.5), ph: rand(0, TAU) };
+  });
 
-    node.flash *= Math.exp(-dt * 3.2);
-    node.v *= Math.exp(-dt * 0.9);
-    node.refractory -= dt;
-    if (node.ring < 1) node.ring = Math.min(1, node.ring + dt * 1.4);
+  view.portrait = portrait;
+  computeRoutes();
+}
+
+/* ---------- routes: cheapest path from the core, favouring strong axons ---------- */
+
+function computeRoutes() {
+  const n = neurons.length;
+  const dist = new Float64Array(n).fill(Infinity);
+  const prev = new Array(n).fill(null);
+  const done = new Uint8Array(n);
+  dist[core.i] = 0;
+
+  for (let step = 0; step < n; step += 1) {
+    let u = -1;
+    for (let i = 0; i < n; i += 1) {
+      if (!done[i] && dist[i] < Infinity && (u === -1 || dist[i] < dist[u])) u = i;
+    }
+    if (u === -1) break;
+    done[u] = 1;
+
+    for (const axon of neurons[u].axons) {
+      if (axon.state !== "live") continue;
+      const next = axon.a.i === u ? axon.b : axon.a;
+      const cost = dist[u] + axon.len / (0.3 + axon.weight);
+      if (cost < dist[next.i]) {
+        dist[next.i] = cost;
+        prev[next.i] = axon;
+      }
+    }
+  }
+
+  children = new Map();
+  for (const neuron of neurons) {
+    const axon = prev[neuron.i];
+    if (!axon) continue;
+    const parent = other(axon, neuron);
+    if (!children.has(parent.i)) children.set(parent.i, []);
+    children.get(parent.i).push({ axon, dir: axon.a === parent ? 1 : -1 });
+  }
+
+  routes = new Map();
+  for (const [id, hub] of hubs) {
+    const chain = [];
+    let current = hub;
+    while (prev[current.i]) {
+      const axon = prev[current.i];
+      const parent = other(axon, current);
+      chain.unshift({ axon, dir: axon.a === parent ? 1 : -1 });
+      current = parent;
+    }
+    routes.set(id, chain);
+  }
+
+  for (const axon of axons) axon.route = false;
+  if (focusedId) for (const { axon } of routes.get(focusedId) || []) axon.route = true;
+
+  routesDirty = false;
+}
+
+/* ---------- camera & projection ---------- */
+
+function updateCameraBasis() {
+  const yaw = cam.yaw + cam.offYaw;
+  const pitch = clamp(cam.pitch + cam.offPitch, -0.7, 0.8);
+  cam.cyaw = Math.cos(yaw);
+  cam.syaw = Math.sin(yaw);
+  cam.cp = Math.cos(pitch);
+  cam.sp = Math.sin(pitch);
+}
+
+function project(x, y, z, out, o) {
+  const x1 = x * cam.cyaw + z * cam.syaw;
+  const z1 = -x * cam.syaw + z * cam.cyaw;
+  const y2 = y * cam.cp - z1 * cam.sp;
+  const z2 = y * cam.sp + z1 * cam.cp;
+  const zc = z2 + cam.dist;
+
+  if (zc < 0.3) {
+    out[o + 2] = 0;
+    out[o + 3] = 0;
+    return;
+  }
+
+  const s = view.f / zc;
+  out[o] = view.cx + x1 * s;
+  out[o + 1] = view.cy - y2 * s;
+  out[o + 2] = cam.dist / zc;
+
+  // depth fog: near things bright, the far side of the cloud fades into space
+  const dn = clamp((zc - (cam.dist - 1.3)) / 2.6, 0, 1);
+  out[o + 3] = 0.1 + 0.9 * Math.pow(1 - dn, 1.5);
+}
+
+/* ---------- living tissue ---------- */
+
+function displace(n, t) {
+  const breath = 1 + 0.035 * Math.sin((t * TAU) / 10);
+  const bx = n.bx * breath * (1 + 0.03 * Math.sin((t * TAU) / 13));
+  const by = n.by * breath * (1 + 0.03 * Math.sin((t * TAU) / 15 + 1));
+  const bz = n.bz * breath;
+
+  // a slow flow field washes through the volume, so neighbours move together
+  const amp = n.kind === "core" ? 0 : n.kind === "hub" ? 0.035 : 0.065;
+  const fx = Math.sin(by * 2.1 + t * 0.21 + 1.3) + 0.5 * Math.sin(bz * 3.3 - t * 0.17);
+  const fy = Math.sin(bz * 1.9 + t * 0.18 + 4.1) + 0.5 * Math.sin(bx * 3.1 + t * 0.23);
+  const fz = Math.sin(bx * 2.3 + t * 0.16 + 2.2) + 0.5 * Math.sin(by * 2.9 - t * 0.2);
+  const j = n.kind === "core" ? 0 : 0.012;
+
+  n.x = bx + fx * amp + Math.sin(t * 0.9 + n.ph) * j + n.kx;
+  n.y = by + fy * amp + Math.sin(t * 0.8 + n.ph * 1.7) * j + n.ky;
+  n.z = bz + fz * amp + Math.cos(t * 0.85 + n.ph) * j + n.kz;
+}
+
+function stepNeurons(dt) {
+  const damping = Math.exp(-dt * 4.5);
+  for (const n of neurons) {
+    n.kvx = (n.kvx - n.kx * 38 * dt) * damping;
+    n.kvy = (n.kvy - n.ky * 38 * dt) * damping;
+    n.kvz = (n.kvz - n.kz * 38 * dt) * damping;
+    n.kx += n.kvx * dt;
+    n.ky += n.kvy * dt;
+    n.kz += n.kvz * dt;
+
+    n.flash *= Math.exp(-dt * 3);
+    n.v *= Math.exp(-dt * 0.8);
+    n.refractory -= dt;
+    if (n.ring < 1) n.ring = Math.min(1, n.ring + dt * 1.2);
   }
 }
 
-function snapLayer(layer) {
-  for (const node of layer.nodes.values()) {
-    node.x = node.tx;
-    node.y = node.ty;
-    node.vx = 0;
-    node.vy = 0;
-  }
-  for (const edge of layer.edges) {
-    edge.len = edge.rest;
-  }
-}
-
-function shapeEdge(edge, t) {
-  const { a, b, pts } = edge;
+function shapeAxon(axon, t) {
+  const { a, b, m1, m2, s1, s2, pts } = axon;
+  const w1 = Math.sin(t * axon.freq * TAU + axon.ph);
+  const w2 = Math.sin(t * axon.freq * 1.3 * TAU + axon.ph + 1);
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len;
-  const ny = dx / len;
+  const dz = b.z - a.z;
 
-  // slack fibres sag and ripple more, taut ones straighten out
-  const slack = clamp(edge.rest / len, 0.55, 1.7);
-  const loose = slack * slack;
-  const bend = edge.bend * len * loose;
-  const amp = Math.min(len * 0.04, 12) * edge.ampF * loose;
+  const c1x = a.x + dx / 3 + m1[0] + s1[0] * w1;
+  const c1y = a.y + dy / 3 + m1[1] + s1[1] * w1;
+  const c1z = a.z + dz / 3 + m1[2] + s1[2] * w1;
+  const c2x = a.x + (dx * 2) / 3 + m2[0] + s2[0] * w2;
+  const c2y = a.y + (dy * 2) / 3 + m2[1] + s2[1] * w2;
+  const c2z = a.z + (dz * 2) / 3 + m2[2] + s2[2] * w2;
 
-  for (let i = 0; i <= SAMPLES; i += 1) {
-    const s = i / SAMPLES;
-    const env = Math.sin(Math.PI * s);
-    let off = env * (bend + amp * Math.sin(TAU * edge.k * s - t * edge.freq * TAU + edge.ph));
-
-    for (const bump of edge.bumps) {
-      const d = ((s - bump.s) * len) / 16;
-      off += bump.amp * env * Math.exp(-d * d);
-    }
-
-    pts[i * 2] = a.x + dx * s + nx * off;
-    pts[i * 2 + 1] = a.y + dy * s + ny * off;
+  for (let i = 0; i <= SEG; i += 1) {
+    const s = i / SEG;
+    const u = 1 - s;
+    const k0 = u * u * u;
+    const k1 = 3 * u * u * s;
+    const k2 = 3 * u * s * s;
+    const k3 = s * s * s;
+    project(
+      k0 * a.x + k1 * c1x + k2 * c2x + k3 * b.x,
+      k0 * a.y + k1 * c1y + k2 * c2y + k3 * b.y,
+      k0 * a.z + k1 * c1z + k2 * c2z + k3 * b.z,
+      pts,
+      i * 4
+    );
   }
 }
 
-function pointAt(edge, s) {
-  const f = clamp(s, 0, 1) * SAMPLES;
-  const i = Math.min(SAMPLES - 1, Math.floor(f));
+function samplePoints(pts, s, out) {
+  const f = clamp(s, 0, 1) * SEG;
+  const i = Math.min(SEG - 1, Math.floor(f));
   const u = f - i;
-  const p = edge.pts;
-  return [p[i * 2] + (p[i * 2 + 2] - p[i * 2]) * u, p[i * 2 + 1] + (p[i * 2 + 3] - p[i * 2 + 1]) * u];
+  for (let k = 0; k < 4; k += 1) out[k] = pts[i * 4 + k] + (pts[i * 4 + 4 + k] - pts[i * 4 + k]) * u;
+  return out;
+}
+
+/* ---------- plasticity: axons strengthen, wither, and regrow ---------- */
+
+function reachesAll(without) {
+  const seen = new Uint8Array(neurons.length);
+  const stack = [core];
+  seen[core.i] = 1;
+  let count = 1;
+  while (stack.length) {
+    const n = stack.pop();
+    for (const axon of n.axons) {
+      if (axon === without || axon.state !== "live") continue;
+      const next = other(axon, n);
+      if (!seen[next.i]) {
+        seen[next.i] = 1;
+        count += 1;
+        stack.push(next);
+      }
+    }
+  }
+  return count === neurons.length;
+}
+
+function rewire() {
+  const weak = axons.filter((axon) => axon.state === "live" && axon.weight < 0.5 && !axon.route);
+  for (let attempt = 0; attempt < 8 && weak.length; attempt += 1) {
+    const axon = pick(weak);
+    if (reachesAll(axon)) {
+      axon.state = "dying";
+      routesDirty = true;
+      break;
+    }
+  }
+
+  const seeds = neurons.filter((n) => n.kind !== "core" && n.axons.length < 4);
+  for (let attempt = 0; attempt < 6 && seeds.length; attempt += 1) {
+    const from = pick(seeds);
+    const options = neurons
+      .filter((n) => n !== from && n.kind !== "core" && !connected(from, n))
+      .map((n) => [n, distance(from, n)])
+      .filter(([, d]) => d < 0.48)
+      .sort((p, q) => p[1] - q[1])
+      .slice(0, 3);
+    if (!options.length) continue;
+    makeAxon(from, pick(options)[0], "growing");
+    break;
+  }
+}
+
+function stepAxons(dt) {
+  for (let i = axons.length - 1; i >= 0; i -= 1) {
+    const axon = axons[i];
+    axon.glow *= Math.exp(-dt * 2.2);
+    axon.weight += (0.42 - axon.weight) * dt * 0.012;
+
+    if (axon.state === "growing") {
+      axon.grow += dt / 3.5;
+      if (axon.grow >= 1) {
+        axon.grow = 1;
+        axon.state = "live";
+        routesDirty = true;
+      }
+    } else if (axon.state === "dying") {
+      axon.grow -= dt / 2.6;
+      if (axon.grow <= 0) {
+        axons.splice(i, 1);
+        axon.a.axons.splice(axon.a.axons.indexOf(axon), 1);
+        axon.b.axons.splice(axon.b.axons.indexOf(axon), 1);
+        pulses = pulses.filter((p) => p.axon !== axon);
+      }
+    }
+  }
 }
 
 /* ---------- firing ---------- */
 
-function spawnPulse(layer, edge, dir, options = {}) {
-  if (pulses.length >= MAX_PULSES && !options.route) return;
+function other(axon, n) {
+  return axon.a === n ? axon.b : axon.a;
+}
 
+function spawnPulse(axon, dir, kind, options = {}) {
+  if (kind === "spike" && pulses.length >= MAX_SPIKES) return;
   pulses.push({
-    layer,
-    edge,
+    axon,
     dir,
+    kind,
     s: 0,
-    dur: options.dur ?? clamp(edge.len / rand(170, 300), 0.35, 1.7),
+    dur: options.dur ?? clamp(axon.len * rand(1.4, 2.4), 0.25, 1.4),
     strength: options.strength ?? rand(0.75, 1),
-    chain: options.chain ?? [],
-    route: Boolean(options.route)
+    chain: options.chain ?? []
   });
 }
 
-function fire(layer, node, fromEdge = null) {
-  if (node.refractory > 0) return;
-
-  node.flash = 1;
-  node.v = 0;
-  node.refractory = rand(1.1, 2.1);
-  node.ring = 0;
-  node.vx += rand(-18, 18);
-  node.vy += rand(-18, 18);
-
-  if (node.kind === "endpoint") flashEndpoint(node.id);
-
-  for (const edge of node.edges) {
-    edge.tension = Math.min(edge.tension, 0.95);
-    if (edge === fromEdge) continue;
-    if (Math.random() < layer.branch) {
-      spawnPulse(layer, edge, edge.a === node ? 1 : -1);
-    }
+function kickNeighbours(n, force) {
+  for (const axon of n.axons) {
+    const o = other(axon, n);
+    o.kvx += (n.x - o.x) * force;
+    o.kvy += (n.y - o.y) * force;
+    o.kvz += (n.z - o.z) * force;
   }
 }
 
-function stimulate(layer, node, amount, fromEdge) {
-  node.v += amount * rand(0.5, 0.95);
-  node.flash = Math.max(node.flash, 0.25);
-  if (node.v >= 1) fire(layer, node, fromEdge);
+function fire(n, from = null, branch = 0.46) {
+  if (n.refractory > 0) return;
+  n.flash = 1;
+  n.v = 0;
+  n.refractory = rand(1.2, 2.2);
+  n.ring = 0;
+  kickNeighbours(n, 0.5);
+
+  if (n.kind === "hub") flashLabel(n.endpoint.id);
+
+  for (const axon of n.axons) {
+    if (axon === from || axon.state !== "live") continue;
+    if (Math.random() < branch) spawnPulse(axon, axon.a === n ? 1 : -1, "spike");
+  }
 }
 
-function updatePulses(dt) {
+function stimulate(n, amount, from) {
+  n.v += amount * rand(0.5, 0.95);
+  n.flash = Math.max(n.flash, 0.3);
+  if (n.v >= 1) fire(n, from);
+}
+
+function waveDuration(axon) {
+  return clamp(axon.len * 0.55, 0.12, 0.45);
+}
+
+function stepPulses(dt) {
   for (let i = pulses.length - 1; i >= 0; i -= 1) {
     const p = pulses[i];
     p.s += dt / p.dur;
-
-    const s = p.dir > 0 ? p.s : 1 - p.s;
-    p.edge.glow = Math.max(p.edge.glow, p.strength * (p.route ? 0.85 : 0.55));
-    p.edge.bumps.push({ s, amp: (p.route ? 3.2 : 2.2) * p.strength * (p.dir > 0 ? 1 : -1) });
-
+    p.axon.glow = Math.max(p.axon.glow, p.kind === "spike" ? 0.55 * p.strength : 0.9);
     if (p.s < 1) continue;
 
     pulses.splice(i, 1);
-    const node = p.dir > 0 ? p.edge.b : p.edge.a;
+    const n = p.dir > 0 ? p.axon.b : p.axon.a;
+    p.axon.weight = Math.min(1.8, p.axon.weight + (p.kind === "route" ? 0.1 : 0.05));
 
-    if (p.chain.length) {
+    if (p.kind === "route") {
+      n.flash = Math.max(n.flash, 0.9);
+      n.ring = 0;
+      kickNeighbours(n, 0.3);
       const [next, ...rest] = p.chain;
-      node.flash = Math.max(node.flash, 0.85);
-      node.ring = 0;
-      spawnPulse(p.layer, next.edge, next.dir, { dur: p.dur, strength: p.strength, chain: rest, route: true });
-    } else if (p.route) {
-      node.flash = 1;
-      node.ring = 0;
-      if (node.kind === "endpoint") flashEndpoint(node.id);
+      if (next) {
+        spawnPulse(next.axon, next.dir, "route", { dur: p.dur, strength: p.strength, chain: rest });
+      } else if (n.kind === "hub") {
+        flashLabel(n.endpoint.id);
+        kickNeighbours(n, 0.8);
+      }
+    } else if (p.kind === "wave") {
+      n.flash = Math.max(n.flash, 0.85);
+      if (n.kind === "hub" || Math.random() < 0.2) n.ring = 0;
+      if (n.kind === "hub") flashLabel(n.endpoint.id);
+      for (const child of children.get(n.i) || []) {
+        spawnPulse(child.axon, child.dir, "wave", { dur: waveDuration(child.axon), strength: 0.9 });
+      }
     } else {
-      stimulate(p.layer, node, p.strength, p.edge);
+      stimulate(n, p.strength, p.axon);
     }
   }
 }
 
-function routeChain(id) {
-  let current = mainLayer.nodes.get("core");
-  return (routes[id] || []).map((edgeId) => {
-    const edge = mainLayer.edgeById.get(edgeId);
-    const dir = edge.a === current ? 1 : -1;
-    current = dir > 0 ? edge.b : edge.a;
-    return { edge, dir };
-  });
-}
-
-function fireRoute(id, hopDuration) {
-  const [first, ...rest] = routeChain(id);
-  if (!first) return 0;
-  const core = mainLayer.nodes.get("core");
+function launchWave() {
   core.flash = 1;
   core.ring = 0;
-  spawnPulse(mainLayer, first.edge, first.dir, { dur: hopDuration, strength: 1.25, chain: rest, route: true });
-  return (rest.length + 1) * hopDuration;
+  kickNeighbours(core, 0.6);
+  for (const child of children.get(core.i) || []) {
+    spawnPulse(child.axon, child.dir, "wave", { dur: waveDuration(child.axon), strength: 0.9 });
+  }
+  intro.classList.add("wave");
+  setTimeout(() => intro.classList.remove("wave"), 1400);
 }
 
-function flashEndpoint(id) {
-  const el = endpointEls.get(id);
-  if (!el) return;
-  el.classList.add("firing");
-  clearTimeout(el.firingTimer);
-  el.firingTimer = setTimeout(() => el.classList.remove("firing"), 420);
+function fireRoute(id, hop) {
+  const [first, ...rest] = routes.get(id) || [];
+  if (!first) return 0;
+  core.flash = 1;
+  core.ring = 0;
+  spawnPulse(first.axon, first.dir, "route", { dur: hop, strength: 1.2, chain: rest });
+  return (rest.length + 1) * hop;
 }
 
-let mainTimer = 1;
-let farTimer = 0.5;
-
-function spontaneous(dt) {
-  mainTimer -= dt;
-  farTimer -= dt;
-
-  if (mainTimer <= 0) {
-    const ambient = [...mainLayer.nodes.values()].filter((n) => n.kind === "ambient");
-    fire(mainLayer, pick(ambient));
-    mainTimer = rand(0.8, 2.4);
-  }
-
-  if (farTimer <= 0) {
-    fire(farLayer, pick([...farLayer.nodes.values()]));
-    farTimer = rand(0.5, 1.6);
-  }
-
-  // brushing through the tissue excites whatever you touch
-  if (pointer.active && pointer.speed > 70) {
-    for (const node of mainLayer.nodes.values()) {
-      if (node.kind !== "ambient") continue;
-      if (Math.hypot(node.x - pointer.x, node.y - pointer.y) < 34) fire(mainLayer, node);
+function spark(x, y) {
+  sparks.push({ x, y, t: 0 });
+  let best = null;
+  let bestD = 90;
+  for (const n of neurons) {
+    if (n.pf < 0.2) continue;
+    const d = Math.hypot(n.px - x, n.py - y);
+    if (d < bestD) {
+      best = n;
+      bestD = d;
     }
+  }
+  if (!best) return;
+  best.refractory = 0;
+  fire(best, null, 0.9);
+  kickNeighbours(best, 1.2);
+  for (const axon of best.axons) {
+    const o = other(axon, best);
+    setTimeout(() => stimulate(o, 1.3, axon), 180);
   }
 }
 
 /* ---------- drawing ---------- */
 
-function drawStars(t) {
+function drawStars() {
   ctx.fillStyle = "rgb(214, 228, 240)";
   for (const star of stars) {
-    const x = (((star.x + t * 0.0012 * star.depth) % 1) * W) - pointer.sx * 4 * star.depth;
-    const y = star.y * H - pointer.sy * 4 * star.depth;
-    ctx.globalAlpha = star.a * (0.55 + 0.45 * Math.sin(t * star.tw * TAU + star.ph));
-    ctx.beginPath();
-    ctx.arc(x, y, star.r, 0, TAU);
-    ctx.fill();
+    project(star.x, star.y, star.z, tmp, 0);
+    if (!tmp[2]) continue;
+    ctx.globalAlpha = star.a * (0.55 + 0.45 * Math.sin(time * star.tw * TAU + star.ph));
+    const r = star.r * clamp(tmp[2] * 2.2, 0.5, 1.4);
+    ctx.fillRect(tmp[0] - r / 2, tmp[1] - r / 2, r, r);
   }
   ctx.globalAlpha = 1;
 }
 
-function drawEdges(layer) {
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-
-  for (const edge of layer.edges) {
-    const alpha = layer.alpha * (0.1 + edge.glow * 0.38 + (edge.route ? 0.26 : 0));
-    ctx.strokeStyle = `rgba(200, 220, 234, ${alpha.toFixed(3)})`;
-    ctx.lineWidth = layer.scale * (0.9 + edge.glow * 0.7 + (edge.route ? 0.4 : 0));
-
-    const p = edge.pts;
-    ctx.beginPath();
-    ctx.moveTo(p[0], p[1]);
-    for (let i = 1; i <= SAMPLES; i += 1) ctx.lineTo(p[i * 2], p[i * 2 + 1]);
-    ctx.stroke();
+function tracePolyline(path, pts, upTo) {
+  path.moveTo(pts[0], pts[1]);
+  const whole = Math.floor(upTo * SEG);
+  for (let i = 1; i <= whole; i += 1) path.lineTo(pts[i * 4], pts[i * 4 + 1]);
+  if (upTo < 1) {
+    samplePoints(pts, upTo, tmp);
+    path.lineTo(tmp[0], tmp[1]);
   }
 }
 
-function drawDendrites(layer, t) {
-  ctx.lineWidth = 0.8;
-  for (const node of layer.nodes.values()) {
-    if (!node.dendrites.length) continue;
-    const alpha = layer.alpha * (0.09 + node.flash * 0.35);
-    ctx.strokeStyle = `rgba(200, 220, 234, ${alpha.toFixed(3)})`;
-    ctx.beginPath();
-    for (const d of node.dendrites) {
-      const ang = d.ang + 0.4 * Math.sin(t * d.fr * TAU + d.ph);
-      const len = d.len * (1 + node.flash * 0.25);
-      const tipX = node.x + Math.cos(ang) * len;
-      const tipY = node.y + Math.sin(ang) * len;
-      const bend = ang + d.curl + 0.3 * Math.sin(t * d.fr * 1.7 * TAU + d.ph);
-      ctx.moveTo(node.x, node.y);
-      ctx.quadraticCurveTo(
-        node.x + Math.cos(bend) * len * 0.6,
-        node.y + Math.sin(bend) * len * 0.6,
-        tipX,
-        tipY
-      );
-    }
-    ctx.stroke();
+function axonDepth(axon) {
+  const p = axon.pts;
+  const end = SEG * 4;
+  return [(p[2] + p[end + 2]) / 2, (p[3] + p[end + 3]) / 2];
+}
+
+function drawAxons() {
+  const buckets = new Map();
+
+  for (const axon of axons) {
+    if (axon.grow <= 0) continue;
+    const [scale, fog] = axonDepth(axon);
+    if (!fog) continue;
+    const alpha = (0.06 + 0.08 * axon.weight) * fog;
+    const width = clamp((0.4 + 0.55 * axon.weight) * scale, 0.3, 2.6);
+    const key = Math.round(alpha * 80) * 100 + Math.round(width * 4);
+    if (!buckets.has(key)) buckets.set(key, new Path2D());
+    tracePolyline(buckets.get(key), axon.pts, axon.grow);
   }
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const [key, path] of buckets) {
+    ctx.strokeStyle = `rgba(186, 212, 234, ${(Math.floor(key / 100) / 80).toFixed(3)})`;
+    ctx.lineWidth = (key % 100) / 4;
+    ctx.stroke(path);
+  }
+
+  // signals light up the fibres they travel through
+  ctx.globalCompositeOperation = "lighter";
+  for (const axon of axons) {
+    const glow = Math.max(axon.glow, axon.route ? 0.4 : 0);
+    if (glow < 0.04 || axon.grow <= 0) continue;
+    const [scale, fog] = axonDepth(axon);
+    const path = new Path2D();
+    tracePolyline(path, axon.pts, axon.grow);
+    ctx.strokeStyle = axon.route
+      ? `rgba(255, 214, 176, ${(glow * 0.45 * fog).toFixed(3)})`
+      : `rgba(170, 214, 248, ${(glow * 0.5 * fog).toFixed(3)})`;
+    ctx.lineWidth = (0.8 + glow * 1.6) * scale;
+    ctx.stroke(path);
+  }
+
+  // growth cones feel their way forward
+  for (const axon of axons) {
+    if (axon.state === "live") continue;
+    samplePoints(axon.pts, axon.grow, tmp);
+    if (!tmp[3]) continue;
+    drawSprite(sprites.wave, tmp[0], tmp[1], 16 * tmp[2], 0.55 * tmp[3]);
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
 }
 
 function drawPulses() {
   ctx.globalCompositeOperation = "lighter";
   for (const p of pulses) {
-    const scale = p.layer.scale;
-    const alphaScale = p.layer.alpha;
-    const fade = Math.min(1, p.s * 6, (1 - p.s) * 6 + 0.35);
-    const tail = clamp(46 / p.edge.len, 0.04, 0.4);
+    const sprite = p.kind === "route" ? sprites.warm : p.kind === "wave" ? sprites.wave : sprites.soma;
+    const fade = Math.min(1, p.s * 6, (1 - p.s) * 6 + 0.4);
+    const tail = clamp(0.09 / p.axon.len, 0.05, 0.45);
 
     for (let i = 6; i >= 1; i -= 1) {
       const back = p.s - (tail * i) / 6;
       if (back < 0) continue;
-      const [x, y] = pointAt(p.edge, p.dir > 0 ? back : 1 - back);
+      samplePoints(p.axon.pts, p.dir > 0 ? back : 1 - back, tmp);
+      if (!tmp[3]) continue;
       const k = 1 - i / 7;
-      drawSprite(pulseSprite, x, y, (8 + 10 * k) * scale * p.strength, 0.28 * k * fade * alphaScale);
+      drawSprite(sprite, tmp[0], tmp[1], (5 + 8 * k) * tmp[2] * p.strength, 0.3 * k * fade * tmp[3]);
     }
 
-    const [x, y] = pointAt(p.edge, p.dir > 0 ? p.s : 1 - p.s);
-    drawSprite(glowSprite, x, y, 34 * scale * p.strength, 0.5 * fade * alphaScale);
-    drawSprite(pulseSprite, x, y, 11 * scale * p.strength, 1 * fade * alphaScale);
+    samplePoints(p.axon.pts, p.dir > 0 ? p.s : 1 - p.s, tmp);
+    if (!tmp[3]) continue;
+    drawSprite(sprites.glow, tmp[0], tmp[1], 30 * tmp[2] * p.strength, 0.5 * fade * tmp[3]);
+    drawSprite(sprite, tmp[0], tmp[1], 10 * tmp[2] * p.strength, fade * tmp[3]);
   }
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = 1;
 }
 
-function drawNodes(layer, t) {
+function drawNeurons() {
   ctx.globalCompositeOperation = "lighter";
-  for (const node of layer.nodes.values()) {
-    if (node.kind === "core") {
-      const breathe = 0.5 + 0.5 * Math.sin(t * 0.6 + node.breath);
-      drawSprite(coreSprite, node.x, node.y, 70 + breathe * 16 + node.flash * 70, 0.22 + breathe * 0.06 + node.flash * 0.6);
+  for (const n of neurons) {
+    if (!n.pf) continue;
+    const s = n.ps;
+    // neurons drifting close to the lens go soft, like a shallow depth of field
+    const blur = clamp((s - 1.25) * 2.2, 0, 1);
+
+    if (n.kind === "core") {
+      const breathe = 0.5 + 0.5 * Math.sin(time * 0.6);
+      drawSprite(sprites.core, n.px, n.py, (80 + breathe * 18 + n.flash * 80) * s, 0.24 + breathe * 0.06 + n.flash * 0.6);
     } else {
-      const size = (node.kind === "endpoint" ? 26 : 16) + node.flash * 60;
-      drawSprite(glowSprite, node.x, node.y, size * layer.scale, layer.alpha * (0.07 + node.v * 0.12 + node.flash * 0.8));
+      const halo = (n.kind === "hub" ? 34 : 12) + n.flash * 44;
+      drawSprite(sprites.glow, n.px, n.py, halo * s, n.pf * (0.08 + n.v * 0.12 + n.flash * 0.75 + (n.kind === "hub" ? 0.14 : 0)));
     }
 
-    if (node.ring < 1) {
-      const e = 1 - Math.pow(1 - node.ring, 3);
-      ctx.globalAlpha = layer.alpha * (1 - node.ring) * 0.32;
-      ctx.strokeStyle = "rgb(196, 226, 246)";
+    const soma = (4.2 * n.size + n.flash * 4) * s * (1 + blur * 1.6);
+    drawSprite(sprites.soma, n.px, n.py, soma, n.pf * (0.5 + n.flash * 0.5 + n.v * 0.2) * (1 - blur * 0.55));
+
+    if (n.ring < 1) {
+      const e = 1 - Math.pow(1 - n.ring, 3);
+      ctx.globalAlpha = n.pf * (1 - n.ring) * 0.3;
+      ctx.strokeStyle = "rgb(190, 226, 250)";
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, (4 + e * 36) * layer.scale, 0, TAU);
+      ctx.arc(n.px, n.py, (3 + e * 34) * s, 0, TAU);
       ctx.stroke();
     }
   }
+
+  for (const spark of sparks) {
+    const e = 1 - Math.pow(1 - spark.t, 3);
+    ctx.globalAlpha = (1 - spark.t) * 0.4;
+    ctx.strokeStyle = "rgb(200, 230, 250)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(spark.x, spark.y, 6 + e * 70, 0, TAU);
+    ctx.stroke();
+  }
+
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = 1;
+}
 
-  for (const node of layer.nodes.values()) {
-    if (node.kind === "endpoint") continue;
-    const pulse = 1 + 0.12 * Math.sin(t * 0.9 + node.breath);
-    const radius = (node.r * pulse + node.flash * 1.5) * layer.scale;
-    const base = node.kind === "core" ? 0.75 : 0.32;
-    ctx.fillStyle = `rgba(224, 236, 243, ${(layer.alpha * Math.min(1, base + node.flash * 0.65 + node.v * 0.2)).toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, radius, 0, TAU);
-    ctx.fill();
+function placeLabels() {
+  for (const [id, hub] of hubs) {
+    const el = labelEls.get(id);
+    const x = clamp(hub.px, 14, view.W - 14);
+    const y = clamp(hub.py, 20, view.H - 20);
+    el.style.translate = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
+
+    const t = view.title;
+    const behindTitle = x > t.left && x < t.right && y > t.top && y < t.bottom;
+    const opacity = hub.pf ? clamp(0.2 + hub.pf * 0.9, 0.2, 1) * (behindTitle ? 0.12 : 1) : 0;
+    if (el._hidden !== behindTitle) {
+      el._hidden = behindTitle;
+      el.classList.toggle("tucked", behindTitle);
+    }
+    if (Math.abs((el._opacity ?? -1) - opacity) > 0.02) {
+      el._opacity = opacity;
+      el.style.opacity = opacity.toFixed(2);
+    }
+
+    const flip = x > view.cx;
+    if (el._flip !== flip) {
+      el._flip = flip;
+      el.classList.toggle("flip", flip);
+    }
   }
 }
 
-function placeEndpoints() {
-  for (const endpoint of endpoints) {
-    const node = mainLayer.nodes.get(endpoint.id);
-    const el = endpointEls.get(endpoint.id);
-    el.style.translate = `${node.x.toFixed(1)}px ${node.y.toFixed(1)}px`;
+function render() {
+  updateCameraBasis();
+
+  for (const n of neurons) {
+    displace(n, time);
+    project(n.x, n.y, n.z, tmp, 0);
+    n.px = tmp[0];
+    n.py = tmp[1];
+    n.ps = tmp[2];
+    n.pf = tmp[3];
   }
-}
+  for (const axon of axons) shapeAxon(axon, time);
 
-function draw(t) {
-  ctx.clearRect(0, 0, W, H);
-  drawStars(t);
-
-  for (const layer of [farLayer, mainLayer]) {
-    for (const edge of layer.edges) shapeEdge(edge, t);
-    drawEdges(layer);
-    if (layer === mainLayer) drawDendrites(layer, t);
-    drawNodes(layer, t);
-  }
-
+  ctx.clearRect(0, 0, view.W, view.H);
+  drawStars();
+  drawAxons();
   drawPulses();
-  placeEndpoints();
+  drawNeurons();
+  placeLabels();
 }
 
 /* ---------- loop ---------- */
 
-function update(dt) {
-  // parallax drifts with the pointer, or wanders slowly on its own
-  const idleX = 0.25 * Math.sin((time * TAU) / 29);
-  const idleY = 0.25 * Math.cos((time * TAU) / 37);
-  const goalX = pointer.active ? pointer.nx : idleX;
-  const goalY = pointer.active ? pointer.ny : idleY;
-  const ease = 1 - Math.exp(-dt * 1.5);
-  pointer.sx += (goalX - pointer.sx) * ease;
-  pointer.sy += (goalY - pointer.sy) * ease;
-  pointer.speed *= Math.exp(-dt * 6);
+// turn the camera so a hub sits front-left or front-right, clear of the title
+function focusYawFor(hub) {
+  const phi = Math.atan2(hub.bx, hub.bz);
+  const side = Math.sin(phi + cam.yaw) >= 0 ? -1 : 1;
+  return cam.yaw + wrapAngle(Math.PI + side * 0.95 - phi - cam.yaw);
+}
 
-  for (const layer of [farLayer, mainLayer]) {
-    layer.ox = -pointer.sx * layer.parallax;
-    layer.oy = -pointer.sy * layer.parallax;
-    computeTargets(layer, time);
-    stepLayer(layer, dt);
+function stepCamera(dt) {
+  const busy = focusedId !== null || pointer.dragging;
+  cam.spinScale += ((busy ? 0 : 1) - cam.spinScale) * (1 - Math.exp(-dt * 1.5));
+
+  if (!pointer.dragging) {
+    cam.yaw += cam.yawVel * dt;
+    cam.pitch += cam.pitchVel * dt;
+    cam.yawVel *= Math.exp(-dt * 1.8);
+    cam.pitchVel *= Math.exp(-dt * 2.4);
+    cam.pitch += (HOME_PITCH - cam.pitch) * (1 - Math.exp(-dt * 0.35));
+  }
+  cam.yaw += cam.spin * cam.spinScale * dt;
+
+  if (focusedId) {
+    const target = focusYawFor(hubs.get(focusedId));
+    cam.yaw += (target - cam.yaw) * (1 - Math.exp(-dt * 2));
   }
 
-  updatePulses(dt);
-  spontaneous(dt);
+  const parallax = !coarsePointer.matches && pointer.inside && !pointer.dragging;
+  const ease = 1 - Math.exp(-dt * 1.6);
+  cam.offYaw += ((parallax ? pointer.nx * 0.16 : 0) - cam.offYaw) * ease;
+  cam.offPitch += ((parallax ? pointer.ny * 0.1 : 0) - cam.offPitch) * ease;
+  cam.dist += (cam.targetDist - cam.dist) * (1 - Math.exp(-dt * 3));
+}
+
+function update(dt) {
+  stepCamera(dt);
+  stepNeurons(dt);
+  stepAxons(dt);
+  stepPulses(dt);
+
+  for (let i = sparks.length - 1; i >= 0; i -= 1) {
+    sparks[i].t += dt * 1.3;
+    if (sparks[i].t >= 1) sparks.splice(i, 1);
+  }
+
+  spontaneousTimer -= dt;
+  if (spontaneousTimer <= 0) {
+    fire(pick(neurons));
+    spontaneousTimer = rand(0.12, 0.55);
+  }
+
+  plasticityTimer -= dt;
+  if (plasticityTimer <= 0) {
+    rewire();
+    plasticityTimer = rand(2.5, 5);
+  }
+
+  waveTimer -= dt;
+  if (waveTimer <= 0) {
+    launchWave();
+    waveTimer = rand(17, 28);
+  }
+
+  routeTimer -= dt;
+  if (routesDirty || routeTimer <= 0) {
+    computeRoutes();
+    routeTimer = 1.5;
+  }
+
+  // brushing through the cloud excites whatever passes under the cursor
+  if (pointer.inside && !pointer.dragging && pointer.speed > 80) {
+    for (const n of neurons) {
+      if (n.pf > 0.35 && Math.hypot(n.px - pointer.x, n.py - pointer.y) < 26 * n.ps) fire(n);
+    }
+  }
+  pointer.speed *= Math.exp(-dt * 6);
 }
 
 function frame(now) {
-  const dt = Math.min(1 / 30, (now - lastFrame) / 1000 || 1 / 60);
+  const dt = clamp((now - lastFrame) / 1000, 0, 1 / 30);
   lastFrame = now;
   time += dt;
-
   update(dt);
-  draw(time);
-
+  render();
   frameId = requestAnimationFrame(frame);
-}
-
-function renderStill() {
-  for (const layer of [farLayer, mainLayer]) {
-    computeTargets(layer, 0);
-    snapLayer(layer);
-  }
-  draw(0);
 }
 
 function start() {
   cancelAnimationFrame(frameId);
-  pulses.length = 0;
-
+  pulses = [];
   if (reducedMotion.matches) {
-    renderStill();
+    render();
     return;
   }
-
   lastFrame = performance.now();
   frameId = requestAnimationFrame(frame);
 }
@@ -874,159 +969,218 @@ function start() {
 function resize() {
   const box = network.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  W = box.width;
-  H = box.height;
-  minDim = Math.min(W, H);
+  view.W = box.width;
+  view.H = box.height;
+  view.cx = view.W / 2;
+  view.cy = view.H / 2;
 
-  canvas.width = Math.round(W * dpr);
-  canvas.height = Math.round(H * dpr);
+  canvas.width = Math.round(view.W * dpr);
+  canvas.height = Math.round(view.H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  syncAnchors();
-  createStars();
+  if ((view.H > view.W * 1.1) !== view.portrait) generate();
 
-  for (const layer of [farLayer, mainLayer]) {
-    computeTargets(layer, time);
-    snapLayer(layer);
-  }
+  const title = intro.getBoundingClientRect();
+  view.title = {
+    left: title.left - box.left - 40,
+    right: title.right - box.left + 40,
+    top: title.top - box.top - 16,
+    bottom: title.bottom - box.top + 16
+  };
 
-  if (reducedMotion.matches) draw(0);
+  // fit the cloud's widest extent into the viewport at the orbit distance
+  view.f = Math.min((view.W / (2 * shape.sx)) * 2.7, (view.H / (2 * shape.sy)) * 2.7 * 0.92);
+
+  render();
 }
 
-/* ---------- links & interaction ---------- */
+/* ---------- links ---------- */
 
-function renderLinks() {
-  linkLayer.innerHTML = "";
-  endpointEls.clear();
-
+function buildLinks() {
   for (const endpoint of endpoints) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `link-node${endpoint.url ? "" : " unconfigured"}`;
-    button.dataset.id = endpoint.id;
+    const tag = endpoint.url ? "a" : "button";
 
+    // floating labels ride along with their hub; the index below is the accessible list
+    const label = document.createElement(tag);
+    label.className = `link-node${endpoint.url ? "" : " unconfigured"}`;
+    label.tabIndex = -1;
+    label.setAttribute("aria-hidden", "true");
     const text = document.createElement("span");
-    const label = document.createElement("span");
+    const name = document.createElement("span");
     const host = document.createElement("span");
-    label.className = "label";
+    name.className = "label";
     host.className = "host";
-    label.textContent = endpoint.label;
+    name.textContent = endpoint.label;
     host.textContent = endpoint.host;
-    text.append(label, host);
-    button.append(text);
+    text.append(name, host);
+    label.append(text);
 
-    button.addEventListener("mouseenter", () => activateRoute(endpoint.id));
-    button.addEventListener("mouseleave", () => deactivateRoute(endpoint.id));
-    button.addEventListener("focus", () => activateRoute(endpoint.id));
-    button.addEventListener("blur", () => deactivateRoute(endpoint.id));
-    button.addEventListener("click", (event) => openEndpoint(endpoint, event));
+    const item = document.createElement(tag);
+    item.className = `index-item${endpoint.url ? "" : " unconfigured"}`;
+    item.textContent = endpoint.label.toLowerCase();
+    if (!endpoint.url) item.setAttribute("aria-label", `${endpoint.label} (not connected yet)`);
 
-    endpointEls.set(endpoint.id, button);
-    linkLayer.appendChild(button);
+    for (const el of [label, item]) {
+      if (endpoint.url) el.href = endpoint.url;
+      else el.type = "button";
+      el.addEventListener("mouseenter", () => focusHub(endpoint.id));
+      el.addEventListener("mouseleave", () => blurHub(endpoint.id));
+      el.addEventListener("focus", () => focusHub(endpoint.id));
+      el.addEventListener("blur", () => blurHub(endpoint.id));
+      el.addEventListener("click", (event) => openEndpoint(endpoint, event));
+    }
+
+    labelEls.set(endpoint.id, label);
+    indexEls.set(endpoint.id, item);
+    linkLayer.append(label);
+    indexNav.append(item);
   }
 }
 
-function setRouteHighlight(id, on) {
-  for (const { edge } of routeChain(id)) edge.route = on;
-  endpointEls.get(id)?.classList.toggle("active", on);
-  if (reducedMotion.matches) draw(0);
+function flashLabel(id) {
+  const el = labelEls.get(id);
+  if (!el) return;
+  el.classList.add("firing");
+  clearTimeout(el._firing);
+  el._firing = setTimeout(() => el.classList.remove("firing"), 450);
 }
 
-function activateRoute(id) {
-  setRouteHighlight(id, true);
-  if (!reducedMotion.matches) fireRoute(id, 0.3);
+function focusHub(id) {
+  if (focusedId === id) return;
+  if (focusedId) blurHub(focusedId);
+  focusedId = id;
+  for (const { axon } of routes.get(id) || []) axon.route = true;
+  labelEls.get(id)?.classList.add("active");
+  indexEls.get(id)?.classList.add("active");
+
+  if (reducedMotion.matches) render();
+  else fireRoute(id, 0.15);
 
   const endpoint = endpoints.find((item) => item.id === id);
-  setHint(endpoint?.url ? endpoint.host : `${endpoint?.label ?? id} · not connected yet`);
+  setHint(endpoint.url ? endpoint.host : `${endpoint.label} · not connected yet`);
 }
 
-function deactivateRoute(id) {
-  setRouteHighlight(id, false);
-  setHint(IDLE_HINT, false);
+function blurHub(id) {
+  if (focusedId !== id) return;
+  focusedId = null;
+  for (const axon of axons) axon.route = false;
+  labelEls.get(id)?.classList.remove("active");
+  indexEls.get(id)?.classList.remove("active");
+  setHint(idleHint(), false);
+  if (reducedMotion.matches) render();
+}
+
+function openEndpoint(endpoint, event) {
+  if (!endpoint.url) {
+    event.preventDefault();
+    focusHub(endpoint.id);
+    return;
+  }
+
+  // modified clicks open a new tab the normal way
+  if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+  if (reducedMotion.matches) return;
+
+  event.preventDefault();
+  focusHub(endpoint.id);
+  setHint(`routing to ${endpoint.host}`);
+  const travel = fireRoute(endpoint.id, 0.07);
+  setTimeout(() => {
+    window.location.href = endpoint.url;
+  }, Math.min(900, travel * 1000 + 120));
+}
+
+function idleHint() {
+  return coarsePointer.matches ? "drag to turn · tap to spark" : "drag to turn · click to spark";
 }
 
 function setHint(text, flash = true) {
   clearTimeout(hintTimer);
   hint.textContent = text;
   hint.classList.toggle("flash", flash);
-
-  if (flash) {
-    hintTimer = setTimeout(() => hint.classList.remove("flash"), 900);
-  }
+  if (flash) hintTimer = setTimeout(() => hint.classList.remove("flash"), 900);
 }
 
-function openEndpoint(endpoint, event) {
-  if (!endpoint.url) {
-    activateRoute(endpoint.id);
-    setHint(`${endpoint.label} · endpoint not connected yet`);
-    setTimeout(() => deactivateRoute(endpoint.id), 900);
-    return;
-  }
+/* ---------- pointer ---------- */
 
-  if (event.metaKey || event.ctrlKey || event.shiftKey) {
-    window.open(endpoint.url, "_blank", "noopener,noreferrer");
-    return;
-  }
-
-  if (reducedMotion.matches) {
-    window.location.href = endpoint.url;
-    return;
-  }
-
-  setRouteHighlight(endpoint.id, true);
-  setHint(`routing to ${endpoint.host}`);
-  const travel = fireRoute(endpoint.id, 0.17);
-
-  setTimeout(() => {
-    window.location.href = endpoint.url;
-  }, travel * 1000 + 90);
-}
-
-function handlePointer(event) {
+function localPoint(event) {
   const box = network.getBoundingClientRect();
-  const x = event.clientX - box.left;
-  const y = event.clientY - box.top;
-  const now = performance.now();
+  return [event.clientX - box.left, event.clientY - box.top];
+}
 
-  if (pointer.active) {
-    const elapsed = Math.max(8, now - pointer.last);
-    const speed = (Math.hypot(x - pointer.x, y - pointer.y) / elapsed) * 1000;
-    pointer.speed = Math.max(pointer.speed * 0.6, speed);
+function onPointerDown(event) {
+  if (event.target.closest(".link-node, .index") || event.button > 0) return;
+  const [x, y] = localPoint(event);
+  Object.assign(pointer, { down: true, dragging: false, startX: x, startY: y, lastX: x, lastY: y, lastT: performance.now() });
+}
+
+function onPointerMove(event) {
+  const [x, y] = localPoint(event);
+  const now = performance.now();
+  const elapsed = Math.max(8, now - pointer.lastT);
+  const dx = x - pointer.lastX;
+  const dy = y - pointer.lastY;
+
+  if (pointer.down) {
+    if (!pointer.dragging && Math.hypot(x - pointer.startX, y - pointer.startY) > 6) pointer.dragging = true;
+    if (pointer.dragging) {
+      cam.yaw += dx * 0.0055;
+      cam.pitch = clamp(cam.pitch + dy * 0.004, -0.6, 0.75);
+      cam.yawVel = cam.yawVel * 0.5 + ((dx * 0.0055) / elapsed) * 500;
+      cam.pitchVel = cam.pitchVel * 0.5 + ((dy * 0.004) / elapsed) * 500;
+      if (reducedMotion.matches) render();
+    }
+  } else if (event.pointerType === "mouse") {
+    pointer.speed = Math.max(pointer.speed * 0.6, (Math.hypot(dx, dy) / elapsed) * 1000);
   }
 
   pointer.x = x;
   pointer.y = y;
-  pointer.nx = x / W - 0.5;
-  pointer.ny = y / H - 0.5;
-  pointer.last = now;
-  pointer.active = true;
+  pointer.nx = x / view.W - 0.5;
+  pointer.ny = y / view.H - 0.5;
+  pointer.lastX = x;
+  pointer.lastY = y;
+  pointer.lastT = now;
+  pointer.inside = event.pointerType === "mouse" || pointer.down;
 }
 
-function releasePointer(event) {
-  if (event.pointerType === "mouse" && event.type === "pointerup") return;
-  pointer.active = false;
-  pointer.x = pointer.y = -9999;
+function onPointerUp(event) {
+  if (pointer.down && !pointer.dragging && !reducedMotion.matches) {
+    const [x, y] = localPoint(event);
+    spark(x, y);
+  }
+  pointer.down = false;
+  pointer.dragging = false;
+  if (event.pointerType !== "mouse") pointer.inside = false;
+}
+
+function onWheel(event) {
+  event.preventDefault();
+  cam.targetDist = clamp(cam.targetDist + event.deltaY * 0.0016, 1.8, 3.8);
+  if (reducedMotion.matches) {
+    cam.dist = cam.targetDist;
+    render();
+  }
 }
 
 /* ---------- boot ---------- */
 
-renderLinks();
-mainLayer = createMainLayer();
-farLayer = createFarLayer();
+buildLinks();
+setHint(idleHint(), false);
 resize();
+new ResizeObserver(resize).observe(network);
 start();
 
-// ResizeObserver fires before paint, so the canvas never draws at a stale, stretched size
-new ResizeObserver(resize).observe(network);
-
-window.addEventListener("pointermove", handlePointer, { passive: true });
-window.addEventListener("pointerdown", handlePointer, { passive: true });
-window.addEventListener("pointerup", releasePointer);
-window.addEventListener("pointercancel", releasePointer);
-document.documentElement.addEventListener("pointerleave", releasePointer);
+network.addEventListener("pointerdown", onPointerDown);
+window.addEventListener("pointermove", onPointerMove, { passive: true });
+window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", onPointerUp);
+document.documentElement.addEventListener("pointerleave", () => {
+  pointer.inside = false;
+});
+network.addEventListener("wheel", onWheel, { passive: false });
 
 reducedMotion.addEventListener?.("change", start);
-
 window.addEventListener("pagehide", () => cancelAnimationFrame(frameId));
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) start();
