@@ -1,39 +1,35 @@
 # pub-ju5tu5.net
 
-A single public identity gateway for Justus: one URL that routes to every public profile and project endpoint.
+A minimalist link hub for Justus.
 
-## Concept
+Instead of a normal link-in-bio list, the page is a quiet neural map: `justus.net` sits in the middle of a small living graph, public destinations are part of the network, and subtle pulses move through the connections.
 
-The page is intentionally not a generic link-in-bio list. It behaves like a tiny network topology:
+## Interaction
 
-- `justus.net` is the central identity router.
-- Public profiles are endpoints.
-- Hovering an endpoint highlights its route.
-- Clicking a configured endpoint sends an animated packet before navigating.
-- The route console shows the selected destination and state.
-- The layout collapses into a mobile topology instead of a plain button stack.
+- Ambient neurons occasionally fire through random multi-hop paths.
+- Hovering or focusing a destination reveals the route through the network.
+- Clicking a configured destination sends a final pulse through its route before opening it.
+- Unconfigured destinations stay visible but subdued until their public URL is added.
+- Motion respects `prefers-reduced-motion`.
 
 ## Configure links
 
-All destinations live at the top of `script.js` in the `endpoints` array.
-
-A configured endpoint:
+Edit the `endpoints` array at the top of `script.js`.
 
 ```js
 {
   id: "github",
   label: "GitHub",
   host: "github.com/Aqentjus",
-  url: "https://github.com/Aqentjus",
-  icon: "github"
+  url: "https://github.com/Aqentjus"
 }
 ```
 
-An endpoint with `url: null` remains visible in the topology but reports that it is not configured.
+Set `url: null` for an endpoint that should remain visible but inactive.
 
 ## Run locally
 
-No build step or package manager is required.
+There are no dependencies or build tools.
 
 ```bash
 python3 -m http.server 8000
@@ -43,10 +39,7 @@ Then open `http://localhost:8000`.
 
 ## Files
 
-- `index.html` — semantic page shell
-- `style.css` — responsive network/terminal UI
-- `script.js` — endpoints, topology paths, packet animation, terminal behavior
-
-## Hosting
-
-This is a static site and can be hosted directly by GitHub Pages, Cloudflare Pages, Netlify, nginx, or any other static web server.
+- `index.html` — minimal page shell
+- `style.css` — typography, positioning, and neural visual language
+- `script.js` — graph topology, routes, ambient firing, and navigation
+- `.nojekyll` — keeps static hosting simple
