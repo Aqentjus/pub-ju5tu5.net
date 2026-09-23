@@ -68,22 +68,22 @@ const desktopPositions = {
 
 const mobilePositions = {
   core: [50, 42],
-  github: [18, 18],
+  github: [19, 18],
   projects: [79, 18],
-  linkedin: [86, 48],
+  linkedin: [84, 48],
   email: [72, 75],
   steam: [28, 77],
-  discord: [13, 49],
+  discord: [15, 49],
 
   a1: [33, 10],
   a2: [48, 15],
   a3: [66, 10],
   a4: [69, 29],
-  a5: [92, 31],
-  a6: [86, 66],
+  a5: [91, 31],
+  a6: [85, 66],
   a7: [55, 88],
   a8: [43, 68],
-  a9: [8, 31],
+  a9: [9, 31],
   a10: [32, 31],
   a11: [61, 54],
   a12: [76, 48],
@@ -91,8 +91,8 @@ const mobilePositions = {
   a14: [22, 59],
   a15: [56, 28],
   a16: [50, 4],
-  a17: [95, 78],
-  a18: [6, 72]
+  a17: [94, 78],
+  a18: [7, 72]
 };
 
 const edges = [
@@ -158,17 +158,22 @@ const routes = {
 const graph = document.querySelector("#graph");
 const network = document.querySelector("#network");
 const linkLayer = document.querySelector("#link-layer");
+const coreEl = document.querySelector("#core");
 const hint = document.querySelector("#hint");
 
 const edgeEls = new Map();
 const ambientNodeEls = new Map();
 const endpointEls = new Map();
 
-let positions = desktopPositions;
+const motionState = new Map();
+let basePositions = desktopPositions;
+let dimensions = { width: 0, height: 0 };
 let resizeTimer;
 let ambientTimer;
+let morphTimer;
 let hintTimer;
 let fireBusy = false;
+let animationFrame;
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -178,6 +183,22 @@ function svgEl(name, attrs = {}) {
     el.setAttribute(key, value);
   }
   return el;
+}
+
+function isMobile() {
+  return window.innerWidth <= 760;
+}
+
+function currentBasePositions() {
+  return isMobile() ? mobilePositions : desktopPositions;
+}
+
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function renderLinks() {
@@ -207,21 +228,113 @@ function renderLinks() {
   }
 }
 
-function currentPositions() {
-  return window.innerWidth <= 760 ? mobilePositions : desktopPositions;
+function setupMotionState(reset = false) {
+  basePositions = currentBasePositions();
+
+  for (const [id, base] of Object.entries(basePositions)) {
+    const existing = motionState.get(id);
+
+    if (!existing || reset) {
+      motionState.set(id, {
+        x: base[0],
+        y: base[1],
+        vx: 0,
+        vy: 0,
+        tx: base[0],
+        ty: base[1]
+      });
+    } else {
+      existing.x = clamp(existing.x, 3, 97);
+      existing.y = clamp(existing.y, 3, 97);
+      existing.tx = base[0];
+      existing.ty = base[1];
+      existing.vx *= 0.25;
+      existing.vy *= 0.25;
+    }
+  }
+
+  chooseMorphTargets();
 }
 
-function point(id, width, height) {
-  const [x, y] = positions[id];
+function chooseMorphTargets() {
+  clearTimeout(morphTimer);
+
+  if (reducedMotion.matches) {
+    for (const [id, base] of Object.entries(basePositions)) {
+      const state = motionState.get(id);
+      if (!state) continue;
+      state.tx = base[0];
+      state.ty = base[1];
+    }
+    return;
+  }
+
+  const mobile = isMobile();
+  const scaleX = randomBetween(mobile ? 0.97 : 0.92, mobile ? 1.035 : 1.085);
+  const scaleY = randomBetween(mobile ? 0.97 : 0.93, mobile ? 1.035 : 1.075);
+  const translateX = randomBetween(mobile ? -0.5 : -1.2, mobile ? 0.5 : 1.2);
+  const translateY = randomBetween(mobile ? -0.45 : -1.0, mobile ? 0.45 : 1.0);
+
+  for (const [id, base] of Object.entries(basePositions)) {
+    const state = motionState.get(id);
+    if (!state) continue;
+
+    const isEndpoint = endpoints.some((endpoint) => endpoint.id === id);
+    const isCore = id === "core";
+
+    const individualDrift = isCore
+      ? (mobile ? 0.12 : 0.28)
+      : isEndpoint
+        ? (mobile ? 0.55 : 1.15)
+        : (mobile ? 1.15 : 2.35);
+
+    const stretch = isCore ? 0 : 1;
+    const dx = (base[0] - 50) * (scaleX - 1) * stretch;
+    const dy = (base[1] - 50) * (scaleY - 1) * stretch;
+
+    const marginX = mobile ? 7 : 4;
+    const marginY = mobile ? 4 : 3;
+
+    state.tx = clamp(
+      base[0] + dx + translateX + randomBetween(-individualDrift, individualDrift),
+      marginX,
+      100 - marginX
+    );
+
+    state.ty = clamp(
+      base[1] + dy + translateY + randomBetween(-individualDrift, individualDrift),
+      marginY,
+      100 - marginY
+    );
+  }
+
+  morphTimer = setTimeout(
+    chooseMorphTargets,
+    randomBetween(mobile ? 4200 : 3600, mobile ? 7600 : 7000)
+  );
+}
+
+function percentPoint(id) {
+  const state = motionState.get(id);
+  const fallback = basePositions[id] || [50, 50];
+
   return {
-    x: (x / 100) * width,
-    y: (y / 100) * height
+    x: state?.x ?? fallback[0],
+    y: state?.y ?? fallback[1]
   };
 }
 
-function curvePath(from, to, width, height, index) {
-  const p1 = point(from, width, height);
-  const p2 = point(to, width, height);
+function pixelPoint(id) {
+  const p = percentPoint(id);
+  return {
+    x: (p.x / 100) * dimensions.width,
+    y: (p.y / 100) * dimensions.height
+  };
+}
+
+function curvePath(from, to, index) {
+  const p1 = pixelPoint(from);
+  const p2 = pixelPoint(to);
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const length = Math.hypot(dx, dy) || 1;
@@ -229,7 +342,7 @@ function curvePath(from, to, width, height, index) {
   const nx = -dy / length;
   const ny = dx / length;
   const sign = index % 2 === 0 ? 1 : -1;
-  const bend = Math.min(18, length * 0.045) * sign;
+  const bend = Math.min(isMobile() ? 13 : 20, length * 0.052) * sign;
 
   const mx = (p1.x + p2.x) / 2 + nx * bend;
   const my = (p1.y + p2.y) / 2 + ny * bend;
@@ -237,15 +350,13 @@ function curvePath(from, to, width, height, index) {
   return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} Q ${mx.toFixed(2)} ${my.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
 }
 
-function drawGraph() {
-  positions = currentPositions();
-
+function buildGraph() {
   const box = network.getBoundingClientRect();
-  const width = box.width;
-  const height = box.height;
+  dimensions = { width: box.width, height: box.height };
 
   graph.innerHTML = "";
-  graph.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  graph.setAttribute("viewBox", `0 0 ${dimensions.width} ${dimensions.height}`);
+
   edgeEls.clear();
   ambientNodeEls.clear();
 
@@ -257,35 +368,80 @@ function drawGraph() {
     const path = svgEl("path", {
       id,
       class: "edge",
-      d: curvePath(from, to, width, height, index)
+      d: curvePath(from, to, index)
     });
+
     edgeEls.set(id, path);
     linesGroup.appendChild(path);
   });
 
-  Object.keys(positions)
+  Object.keys(basePositions)
     .filter((id) => id.startsWith("a"))
     .forEach((id) => {
-      const p = point(id, width, height);
+      const p = pixelPoint(id);
       const circle = svgEl("circle", {
         class: "ambient-node",
         cx: p.x,
         cy: p.y,
         r: "2.15"
       });
+
       ambientNodeEls.set(id, circle);
       nodesGroup.appendChild(circle);
     });
 
   graph.append(linesGroup, nodesGroup, pulsesGroup);
+  renderCurrentPositions();
+}
+
+function renderCurrentPositions() {
+  if (!dimensions.width || !dimensions.height) return;
+
+  edges.forEach(([id, from, to], index) => {
+    edgeEls.get(id)?.setAttribute("d", curvePath(from, to, index));
+  });
+
+  for (const [id, circle] of ambientNodeEls.entries()) {
+    const p = pixelPoint(id);
+    circle.setAttribute("cx", p.x);
+    circle.setAttribute("cy", p.y);
+  }
 
   for (const endpoint of endpoints) {
-    const p = point(endpoint.id, width, height);
+    const p = pixelPoint(endpoint.id);
     const el = endpointEls.get(endpoint.id);
     if (!el) continue;
+
     el.style.left = `${p.x}px`;
     el.style.top = `${p.y}px`;
   }
+
+  const core = pixelPoint("core");
+  coreEl.style.left = `${core.x}px`;
+  coreEl.style.top = `${core.y}px`;
+}
+
+function animateNetwork() {
+  const mobile = isMobile();
+  const stiffness = mobile ? 0.0019 : 0.00155;
+  const damping = mobile ? 0.935 : 0.942;
+
+  if (!reducedMotion.matches) {
+    for (const state of motionState.values()) {
+      state.vx += (state.tx - state.x) * stiffness;
+      state.vy += (state.ty - state.y) * stiffness;
+
+      state.vx *= damping;
+      state.vy *= damping;
+
+      state.x += state.vx;
+      state.y += state.vy;
+    }
+
+    renderCurrentPositions();
+  }
+
+  animationFrame = requestAnimationFrame(animateNetwork);
 }
 
 function activateRoute(id) {
@@ -331,22 +487,30 @@ function pulseAlong(edgeId, duration = 360, reverse = false) {
 
     const pulse = svgEl("circle", {
       class: "pulse",
-      r: "2.7"
+      r: isMobile() ? "2.4" : "2.7"
     });
 
     layer.appendChild(pulse);
 
-    const total = path.getTotalLength();
     const start = performance.now();
 
     function frame(now) {
+      const livePath = edgeEls.get(edgeId);
+
+      if (!livePath || !pulse.isConnected) {
+        pulse.remove();
+        resolve();
+        return;
+      }
+
+      const total = livePath.getTotalLength();
       const t = Math.min(1, (now - start) / duration);
       const eased = t < 0.5
         ? 2 * t * t
         : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
       const progress = reverse ? 1 - eased : eased;
-      const p = path.getPointAtLength(total * progress);
+      const p = livePath.getPointAtLength(total * progress);
 
       pulse.setAttribute("cx", p.x);
       pulse.setAttribute("cy", p.y);
@@ -389,9 +553,9 @@ async function ambientFire() {
 
   fireBusy = true;
 
-  const ambientIds = Object.keys(positions).filter((id) => id.startsWith("a"));
+  const ambientIds = Object.keys(basePositions).filter((id) => id.startsWith("a"));
   let current = ambientIds[Math.floor(Math.random() * ambientIds.length)];
-  const hopCount = 1 + Math.floor(Math.random() * 3);
+  const hopCount = 1 + Math.floor(Math.random() * (isMobile() ? 2 : 3));
   const visited = new Set();
 
   for (let hop = 0; hop < hopCount; hop += 1) {
@@ -404,7 +568,7 @@ async function ambientFire() {
     const reverse = edge[2] === current;
     const next = otherEnd(edge, current);
 
-    await pulseAlong(edge[0], 320 + Math.random() * 180, reverse);
+    await pulseAlong(edge[0], 330 + Math.random() * 170, reverse);
 
     const neuron = ambientNodeEls.get(next);
     if (neuron) {
@@ -421,10 +585,12 @@ async function ambientFire() {
 
 function scheduleAmbient() {
   clearTimeout(ambientTimer);
-
   if (reducedMotion.matches) return;
 
-  const delay = 1100 + Math.random() * 2400;
+  const delay = isMobile()
+    ? 1500 + Math.random() * 2800
+    : 1050 + Math.random() * 2400;
+
   ambientTimer = setTimeout(ambientFire, delay);
 }
 
@@ -456,6 +622,7 @@ function openEndpoint(endpoint, event) {
   });
 
   const delay = 360 + Math.max(0, route.length - 1) * 85;
+
   setTimeout(() => {
     window.location.href = endpoint.url;
   }, delay);
@@ -463,15 +630,31 @@ function openEndpoint(endpoint, event) {
 
 function handleResize() {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(drawGraph, 90);
+
+  resizeTimer = setTimeout(() => {
+    setupMotionState(true);
+    buildGraph();
+  }, 100);
+}
+
+function handleMotionPreference() {
+  setupMotionState(true);
+  buildGraph();
+  scheduleAmbient();
 }
 
 renderLinks();
-drawGraph();
+setupMotionState(true);
+buildGraph();
 scheduleAmbient();
+animationFrame = requestAnimationFrame(animateNetwork);
 
 window.addEventListener("resize", handleResize);
-reducedMotion.addEventListener?.("change", () => {
-  drawGraph();
-  scheduleAmbient();
+window.addEventListener("orientationchange", handleResize);
+reducedMotion.addEventListener?.("change", handleMotionPreference);
+
+window.addEventListener("pagehide", () => {
+  cancelAnimationFrame(animationFrame);
+  clearTimeout(ambientTimer);
+  clearTimeout(morphTimer);
 });
