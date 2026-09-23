@@ -14,27 +14,21 @@ const endpoints = [
   {
     id: "linkedin",
     label: "LinkedIn",
-    host: "link pending",
-    url: null
+    host: "Linkedin",
+    url: "https://www.linkedin.com/in/justusven/"
   },
   {
-    id: "email",
-    label: "Email",
-    host: "link pending",
-    url: null
+    id: "X",
+    label: "X",
+    host: "X",
+    url: "https://x.com/justusven"
   },
   {
-    id: "steam",
-    label: "Steam",
-    host: "link pending",
-    url: null
+    id: "Instagram",
+    label: "Instagram",
+    host: "Instagram",
+    url: "https://www.instagram.com/justusven_/"
   },
-  {
-    id: "discord",
-    label: "Discord",
-    host: "link pending",
-    url: null
-  }
 ];
 
 const TAU = Math.PI * 2;
